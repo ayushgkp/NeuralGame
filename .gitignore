@@ -1,0 +1,37 @@
+# Ignore Python cache files
+__pycache__/
+
+# Ignore large data folders
+/data/
+/uploads/
+
+# Ignore VS Code settings
+.vscode/
+
+
+#### Step 2: Undo Your Last Commit
+
+Because you've already committed the large files locally, we need to undo that commit before you can push again.
+
+1.  Open your terminal in VS Code.
+2.  Run this command. It undoes your last commit ("Ayush was here") but **keeps all your file changes safe**:
+
+    ```bash
+    git reset --soft HEAD~1
+    ```
+
+3.  Now, "un-stage" the large data folders by running these two commands:
+
+    ```bash
+    git restore --staged data/
+    git restore --staged uploads/
+    ```
+
+#### Step 3: Replace Your `backend.py`
+
+Now, replace the entire content of your `backend.py` file with the corrected version below, which sets `num_workers` back to `0`.
+
+
+http://googleusercontent.com/immersive_entry_chip/0
+
+This time, Git will ignore the large `data` folder, and your push will succeed. And when you run your `backend.py`, it will no longer crash during training!
