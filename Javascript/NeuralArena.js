@@ -1,21 +1,22 @@
 document.addEventListener('DOMContentLoaded', () => {
     const game = {
-        backendUrl: 'http://127.0.0.1:5000',
+        backendUrl: 'http://127.0.0.1:5000', // Use localhost if 127.0.0.1 fails
 
-        // --- PLAYER STATE (will be overwritten by backend) ---
+        // --- PLAYER STATE ---
         playerLevel: 1, xp: 0, xpToNextLevel: 100, insightPoints: 100,
         computeCredits: 1000, hintUsedThisLevel: false, equippedModel: null,
         equippedProject: null, uploadedDatasets: [], purchasedItems: [],
         currentChallenge: 1,
         
-        worlds: [
+        // --- NEW: Potion State ---
+        activePotions: [], // Stores IDs of selected potions
+
+        worlds: [ /* ... worlds data ... */ 
             { id: 1, name: "CNN Fundamentals", unlocked: true },
             { id: 2, name: "The Training Pipeline", unlocked: false, unlocksAt: 4 },
             { id: 3, name: "Advanced Techniques", unlocked: false, unlocksAt: 6 },
         ],
-
-        challenges: [
-            // Note: Answers are removed from the frontend. The backend is the source of truth.
+        challenges: [ /* ... challenges data ... */ 
             { world: 1, title: "The First Layer", instructions: `<p>Welcome, Architect! Let's build a CNN.</p><p>Every CNN starts with a convolutional layer, <code class='code-class'>Conv2d</code>. It needs <code class='code-variable'>in_channels</code> (3 for RGB) and produces <code class='code-variable'>out_channels</code>.</p><p class="goal"><strong>Goal:</strong> Use <code class='code-function'>nn.Conv2d</code> with <code class='code-number'>16</code> output channels and a kernel size of <code class='code-number'>3</code>.</p>`, code: `class SimpleCNN(nn.Module):<br>    def __init__(self):<br>        super().__init__()<br>        self.conv1 = [_]`, hint: "Use all three keyword arguments: in_channels, out_channels, and kernel_size.", hintCost: 50, insightReward: 50, vis: { type: 'conv', label: 'Conv2D (16)', size: 90 } },
             { world: 1, title: "Activation", instructions: `<p>After a convolution, we need a non-linear activation function. The most common is <code class='code-class'>ReLU</code>.</p><p class="goal"><strong>Goal:</strong> Add a <code class='code-function'>nn.ReLU()</code> layer.</p>`, code: `class SimpleCNN(nn.Module):<br>    def __init__(self):<br>        # ...<br>        self.conv1 = nn.Conv2d(...)<br>        self.relu1 = [_]`, hint: "This function is called with empty parentheses.", hintCost: 50, insightReward: 50, vis: { type: 'relu', label: 'ReLU' } },
             { world: 1, title: "Pooling", instructions: `<p>Now, let's add a <code class='code-class'>MaxPool2d</code> layer to downsample the feature map, making the network faster and more robust.</p><p class="goal"><strong>Goal:</strong> Add a <code class='code-function'>nn.MaxPool2d</code> layer with a kernel size of <code class='code-number'>2</code>.</p>`, code: `class SimpleCNN(nn.Module):<br>    def __init__(self):<br>        # ...<br>        self.relu1 = nn.ReLU()<br>        self.pool1 = [_]`, hint: "The argument for the window size is kernel_size.", hintCost: 50, insightReward: 50, vis: { type: 'pool', label: 'MaxPool2D', size: 45 } },
@@ -47,14 +48,21 @@ document.addEventListener('DOMContentLoaded', () => {
             { id: 'img_classification', name: 'Image Classifier', icon: '📸', cost: 5000, purchased: false, description: 'A complete blueprint for a state-of-the-art image classification project.' },
             { id: 'object_detection', name: 'Object Detector', icon: '🎯', cost: 8000, purchased: false, description: 'Learn to build a project that can find and identify objects in an image.' }
         ],
+
+        // --- NEW: Define Available Potions ---
+        potions: [
+            { id: 'random_flip', name: 'Flipping Charm', icon: '↔️', description: 'Randomly flips images horizontally.', cost: 50 },
+            { id: 'random_rotation', name: 'Potion of Rotation', icon: '🔄', description: 'Randomly rotates images slightly.', cost: 75 },
+            { id: 'color_jitter', name: 'Elixir of Brightness', icon: '✨', description: 'Randomly changes brightness, contrast, and saturation.', cost: 100 }
+        ],
         
         init() {
-            const self = this; // Store the context of the 'game' object
-
+            const self = this; 
             fetch(`${this.backendUrl}/get-progress`)
                 .then(response => response.json())
                 .then(data => {
                     Object.assign(self, data);
+                    self.purchasedItems = self.purchasedItems || []; 
                     self.shopItems.forEach(item => item.purchased = self.purchasedItems.includes(item.id));
                     self.projectItems.forEach(item => item.purchased = self.purchasedItems.includes(item.id));
                     self.renderAll();
@@ -74,8 +82,10 @@ document.addEventListener('DOMContentLoaded', () => {
         },
 
         initEventListeners() {
-            document.getElementById('run-button').addEventListener('click', () => this.checkAnswer());
-            document.getElementById('hint-button').addEventListener('click', () => this.useHint());
+             const runButton = document.getElementById('run-button');
+             const hintButton = document.getElementById('hint-button');
+             if(runButton) runButton.addEventListener('click', () => this.checkAnswer());
+             if(hintButton) hintButton.addEventListener('click', () => this.useHint());
         },
 
         saveProgressToServer() {
@@ -84,6 +94,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 computeCredits: this.computeCredits, currentChallenge: this.currentChallenge,
                 equippedModel: this.equippedModel, equippedProject: this.equippedProject,
                 uploadedDatasets: this.uploadedDatasets, purchasedItems: this.purchasedItems,
+                // Note: We don't save activePotions, they reset each session
             };
             fetch(`${this.backendUrl}/save-progress`, {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -94,7 +105,179 @@ document.addEventListener('DOMContentLoaded', () => {
             .catch(error => console.error('Error saving progress:', error));
         },
 
-        // --- NEWLY ADDED FUNCTIONS ---
+        // --- MODIFIED FUNCTION: Renders datasets AND potions ---
+        renderDataGarden() {
+            const plotsContainer = document.getElementById('dataset-plots');
+            const potionsContainer = document.getElementById('potions-shed'); 
+            if (!plotsContainer || !potionsContainer) return;
+
+            // --- Render Datasets ---
+            plotsContainer.innerHTML = ''; 
+            const allDatasets = [...this.datasets];
+            (this.uploadedDatasets || []).forEach(filename => {
+                if (!allDatasets.some(ds => ds.name === filename)) {
+                    allDatasets.push({ id: filename.toLowerCase().replace(/[^a-z0-9]/g, ''), name: filename, icon: '📁', description: 'User uploaded dataset.' });
+                }
+            });
+            allDatasets.forEach(ds => { 
+                const plotEl = document.createElement('div');
+                plotEl.className = 'plot';
+                plotEl.innerHTML = `
+                    <div class="plot-icon">${ds.icon}</div>
+                    <h3>${ds.name}</h3>
+                    <p>${ds.description}</p>
+                    <button class="train-button" data-dataset-name="${ds.name}">Train</button>
+                `;
+                plotsContainer.appendChild(plotEl);
+            });
+            // --- Upload Plot ---
+            const uploadPlot = document.createElement('div');
+            uploadPlot.className = 'plot upload-plot';
+            uploadPlot.innerHTML = `
+                <div class="plot-icon">📤</div>
+                <h3>Upload Dataset</h3>
+                <p>Select a file to upload.</p>
+                <input type="file" id="dataset-upload-input" accept=".zip,.rar,.7z,.png,.jpg,.jpeg" style="display: none;">
+            `;
+            uploadPlot.addEventListener('click', () => {
+                 const input = document.getElementById('dataset-upload-input');
+                 if(input) input.click();
+             });
+            plotsContainer.appendChild(uploadPlot);
+
+            // --- Render Potions ---
+            potionsContainer.innerHTML = '<h2 class="potions-title">Potion Brewery</h2>'; 
+            this.potions.forEach(potion => {
+                const potionEl = document.createElement('div');
+                potionEl.className = 'potion-item'; // Add a class for styling
+                potionEl.innerHTML = `
+                    <label>
+                        <input type="checkbox" class="potion-checkbox" value="${potion.id}" ${this.activePotions.includes(potion.id) ? 'checked' : ''}>
+                        <span class="potion-icon">${potion.icon}</span>
+                        <strong>${potion.name}</strong> (-${potion.cost} CC)
+                    </label>
+                    <p class="potion-desc">${potion.description}</p>
+                `;
+                potionsContainer.appendChild(potionEl);
+            });
+
+            this.initDataGardenUpload();
+            this.initTrainButtons(); 
+            this.initPotionSelectors(); // Initialize potion checkboxes
+        },
+        
+        initDataGardenUpload() { 
+            const fileInput = document.getElementById('dataset-upload-input');
+            if (!fileInput || fileInput.dataset.listenerAdded) return;
+            
+            fileInput.addEventListener('change', (event) => {
+                const file = event.target.files[0];
+                if (file) {
+                    this.showNotification(`Uploading "${file.name}"...`, 'unlock');
+                    const formData = new FormData();
+                    formData.append('file', file);
+
+                    fetch(`${this.backendUrl}/upload-dataset`, { method: 'POST', body: formData })
+                        .then(response => response.json())
+                        .then(result => {
+                            if (result.status === 'success') {
+                                this.showNotification(result.message, 'success');
+                                this.uploadedDatasets = result.datasets;
+                                this.renderDataGarden(); // Re-render to show the new dataset
+                            } else { this.showNotification(`Error: ${result.message}`, 'error'); }
+                        })
+                        .catch(error => this.showNotification('Upload failed! Server error.', 'error'));
+                }
+            });
+            fileInput.dataset.listenerAdded = 'true';
+        },
+
+        // --- NEW FUNCTION: To handle potion checkbox changes ---
+        initPotionSelectors() {
+            document.querySelectorAll('.potion-checkbox').forEach(checkbox => {
+                 const newCheckbox = checkbox.cloneNode(true);
+                 checkbox.parentNode.replaceChild(newCheckbox, checkbox);
+
+                newCheckbox.addEventListener('change', (event) => {
+                    const potionId = event.target.value;
+                    if (event.target.checked) {
+                        if (!this.activePotions.includes(potionId)) {
+                             this.activePotions.push(potionId);
+                        }
+                    } else {
+                        this.activePotions = this.activePotions.filter(id => id !== potionId);
+                    }
+                     console.log("Activated potions:", this.activePotions);
+                    // We calculate cost *during* training now
+                });
+            });
+        },
+
+        // --- MODIFIED FUNCTION: Sends active potions to backend ---
+        initTrainButtons() {
+            document.querySelectorAll('.train-button').forEach(button => {
+                const newButton = button.cloneNode(true);
+                button.parentNode.replaceChild(newButton, button);
+
+                newButton.addEventListener('click', () => {
+                    const datasetName = newButton.dataset.datasetName;
+                    if (!this.equippedModel) {
+                        this.showNotification('You must equip a model first!', 'error'); return;
+                    }
+                    
+                    // Calculate Potion Costs
+                    let totalPotionCost = 0;
+                    this.activePotions.forEach(potionId => {
+                        totalPotionCost += this.potions.find(p => p.id === potionId)?.cost || 0;
+                    });
+
+                    if (this.computeCredits < totalPotionCost) {
+                        this.showNotification(`Not enough Credits for potions! Cost: ${totalPotionCost} C`, 'error');
+                        return;
+                    }
+                    
+                    // Confirm and Deduct Cost (using simple confirm for now)
+                    const confirmTrain = confirm(`Training cost: ${totalPotionCost} CC for potions. Proceed?`);
+                    if (!confirmTrain) return;
+
+                    this.computeCredits -= totalPotionCost; 
+                    this.updatePlayerStats();
+                    this.saveProgressToServer(); 
+
+                    this.showNotification(`Training ${this.equippedModel} on ${datasetName} with potions...`, 'unlock');
+                    
+                    fetch(`${this.backendUrl}/train-model`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ 
+                            modelName: this.equippedModel, 
+                            datasetName: datasetName,
+                            activePotions: this.activePotions // Send selected potions
+                        })
+                    })
+                    .then(response => response.json())
+                    .then(result => {
+                        if (result.status === 'success') {
+                            this.showNotification(`Training Complete! Accuracy: ${result.accuracy}`, 'success');
+                        } else {
+                            this.showNotification(`Training Failed: ${result.message}`, 'error');
+                            // Refund potion cost on failure
+                            this.computeCredits += totalPotionCost;
+                            this.updatePlayerStats();
+                            this.saveProgressToServer();
+                        }
+                    })
+                    .catch(error => {
+                        this.showNotification('Training failed! Server error.', 'error');
+                         // Refund potion cost on failure
+                        this.computeCredits += totalPotionCost;
+                        this.updatePlayerStats();
+                        this.saveProgressToServer();
+                    });
+                });
+            });
+        },
+
         renderWorldMap() {
             const container = document.getElementById('world-map-screen');
             if (!container) return;
@@ -111,11 +294,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 const levelsHTML = challengesForWorld.map((challenge, idx) => {
                     const globalIdx = this.challenges.indexOf(challenge) + 1;
-                    let status = 'locked';
-                    if (globalIdx < this.currentChallenge) status = 'completed';
-                    else if (globalIdx === this.currentChallenge && world.unlocked) status = 'active';
+                    let statusClass = 'locked';
+                    if (globalIdx < this.currentChallenge) statusClass = 'completed';
+                    else if (globalIdx === this.currentChallenge && world.unlocked) statusClass = 'active';
                     
-                    return `<div class="level-node ${status}" data-challenge="${globalIdx}">${globalIdx}</div>`;
+                    return `<div class="level-node ${statusClass}" data-challenge="${globalIdx}">${globalIdx}</div>`;
                 }).join('<div class="path-line"></div>');
                 
                 worldEl.innerHTML = `
@@ -139,7 +322,7 @@ document.addEventListener('DOMContentLoaded', () => {
             container.innerHTML = this.shopItems.map(item => {
                 let buttonHtml = '';
                 if (!item.purchased) {
-                    buttonHtml = `<button class="buy-button" data-item-id="${item.id}" ${this.computeCredits < item.cost ? 'disabled' : ''}>Buy</button>`;
+                    buttonHtml = `<button class="buy-button" data-item-id="${item.id}" ${this.computeCredits < item.cost ? 'disabled' : ''}>Buy (${item.cost} C)</button>`;
                 } else if (this.equippedModel === item.id) {
                     buttonHtml = `<button class="equipped-button" disabled>Equipped</button>`;
                 } else {
@@ -151,7 +334,6 @@ document.addEventListener('DOMContentLoaded', () => {
                         <div class="shop-icon">${item.icon}</div>
                         <h3>${item.name}</h3>
                         <p>Accuracy: ${item.stats.acc} | Speed: ${item.stats.speed}</p>
-                        <p><strong>${item.cost} Credits</strong></p>
                         ${buttonHtml}
                     </div>
                 `;
@@ -167,9 +349,9 @@ document.addEventListener('DOMContentLoaded', () => {
             container.innerHTML = this.projectItems.map(item => {
                 let buttonHtml = '';
                  if (!item.purchased) {
-                    buttonHtml = `<button class="buy-button" data-item-id="${item.id}" data-item-type="project" ${this.computeCredits < item.cost ? 'disabled' : ''}>Buy</button>`;
+                    buttonHtml = `<button class="buy-button" data-item-id="${item.id}" data-item-type="project" ${this.computeCredits < item.cost ? 'disabled' : ''}>Buy (${item.cost} C)</button>`;
                 } else if (this.equippedProject === item.id) {
-                    buttonHtml = `<button class="equipped-button">Equipped</button>`;
+                    buttonHtml = `<button class="equipped-button" disabled>Equipped</button>`;
                 } else {
                     buttonHtml = `<button class="equip-button" data-item-id="${item.id}" data-item-type="project">Equip</button>`;
                 }
@@ -179,118 +361,12 @@ document.addEventListener('DOMContentLoaded', () => {
                         <div class="project-icon">${item.icon}</div>
                         <h3>${item.name}</h3>
                         <p>${item.description}</p>
-                        <p><strong>${item.cost} Credits</strong></p>
                         ${buttonHtml}
                     </div>
                 `;
             }).join('');
             
             this.initShopButtons();
-        },
-        // --- END NEWLY ADDED FUNCTIONS ---
-
-        renderDataGarden() {
-            const container = document.getElementById('dataset-plots');
-            container.innerHTML = ''; 
-
-            const allDatasets = [...this.datasets];
-            (this.uploadedDatasets || []).forEach(filename => {
-                if (!allDatasets.some(ds => ds.name === filename)) {
-                    allDatasets.push({
-                        id: filename.toLowerCase().replace(/[^a-z0-9]/g, ''),
-                        name: filename,
-                        icon: '📁',
-                        description: 'User uploaded dataset.'
-                    });
-                }
-            });
-
-            allDatasets.forEach(ds => {
-                const plotEl = document.createElement('div');
-                plotEl.className = 'plot';
-                plotEl.innerHTML = `
-                    <div class="plot-icon">${ds.icon}</div>
-                    <h3>${ds.name}</h3>
-                    <p>${ds.description}</p>
-                    <button class="train-button" data-dataset-name="${ds.name}">Train</button>
-                `;
-                container.appendChild(plotEl);
-            });
-
-            const uploadPlot = document.createElement('div');
-            uploadPlot.className = 'plot upload-plot';
-            uploadPlot.innerHTML = `
-                <div class="plot-icon">📤</div>
-                <h3>Upload Dataset</h3>
-                <p>Select a file to upload.</p>
-                <input type="file" id="dataset-upload-input" accept=".zip,.rar,.7z,.png,.jpg,.jpeg" style="display: none;">
-            `;
-            uploadPlot.addEventListener('click', () => document.getElementById('dataset-upload-input').click());
-            container.appendChild(uploadPlot);
-            
-            this.initDataGardenUpload();
-            this.initTrainButtons();
-        },
-        
-        initDataGardenUpload() {
-            const fileInput = document.getElementById('dataset-upload-input');
-            if (fileInput.dataset.listenerAdded) return;
-            
-            fileInput.addEventListener('change', (event) => {
-                const file = event.target.files[0];
-                if (file) {
-                    this.showNotification(`Uploading "${file.name}"...`, 'unlock');
-                    const formData = new FormData();
-                    formData.append('file', file);
-
-                    fetch(`${this.backendUrl}/upload-dataset`, { method: 'POST', body: formData })
-                        .then(response => response.json())
-                        .then(result => {
-                            if (result.status === 'success') {
-                                this.showNotification(result.message, 'success');
-                                this.uploadedDatasets = result.datasets;
-                                this.renderDataGarden();
-                            } else { this.showNotification(`Error: ${result.message}`, 'error'); }
-                        })
-                        .catch(error => this.showNotification('Upload failed! Could not reach server.', 'error'));
-                }
-            });
-            fileInput.dataset.listenerAdded = 'true';
-        },
-
-        initTrainButtons() {
-            document.querySelectorAll('.train-button').forEach(button => {
-                const newButton = button.cloneNode(true);
-                button.parentNode.replaceChild(newButton, button);
-
-                newButton.addEventListener('click', () => {
-                    const datasetName = newButton.dataset.datasetName;
-                    if (!this.equippedModel) {
-                        this.showNotification('You must equip a model from the Store first!', 'error');
-                        return;
-                    }
-                    
-                    this.showNotification(`Training ${this.equippedModel} on ${datasetName}... This may take a moment.`, 'unlock');
-                    
-                    fetch(`${this.backendUrl}/train-model`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ modelName: this.equippedModel, datasetName: datasetName })
-                    })
-                    .then(response => response.json())
-                    .then(result => {
-                        if (result.status === 'success') {
-                            this.showNotification(`Training Complete! Final Accuracy: ${result.accuracy}`, 'success');
-                        } else {
-                            this.showNotification(`Training Failed: ${result.message}`, 'error');
-                        }
-                    })
-                    .catch(error => {
-                        console.error('Training Error:', error);
-                        this.showNotification('Training failed! Could not connect to the server.', 'error');
-                    });
-                });
-            });
         },
 
         initShopButtons() {
@@ -340,7 +416,8 @@ document.addEventListener('DOMContentLoaded', () => {
             const userInput = inputField.value.trim();
 
             this.showNotification('Validating on server...', 'unlock');
-            document.getElementById('run-button').disabled = true;
+            const runButton = document.getElementById('run-button');
+             if(runButton) runButton.disabled = true;
 
             let result;
             try {
@@ -352,7 +429,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 result = await response.json();
             } catch (error) {
                 this.showNotification('Could not connect to server!', 'error');
-                document.getElementById('run-button').disabled = false;
+                 if(runButton) runButton.disabled = false;
                 return;
             }
 
@@ -374,7 +451,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 }, 1500);
             } else {
                 this.showNotification('Not quite, try again!', 'error');
-                document.getElementById('run-button').disabled = false;
+                 if(runButton) runButton.disabled = false;
                 inputField.style.borderBottom = '2px solid var(--accent-red)';
                 setTimeout(() => { inputField.style.borderBottom = ''; }, 1000);
             }
@@ -393,32 +470,47 @@ document.addEventListener('DOMContentLoaded', () => {
             this.updatePlayerStats();
         },
         checkUnlocks() {
+            let updated = false;
             this.worlds.forEach(world => {
                 if (!world.unlocked && this.playerLevel >= world.unlocksAt) {
                     world.unlocked = true;
                     this.showNotification(`New World Unlocked: ${world.name}!`, 'unlock');
-                    this.renderWorldMap();
+                    updated = true;
                 }
             });
+             if(updated) this.renderWorldMap(); 
         },
         updatePlayerStats() {
-            document.getElementById('insight-stat').textContent = this.insightPoints;
-            document.getElementById('credits-stat').textContent = this.computeCredits;
-            document.getElementById('player-level-stat').textContent = this.playerLevel;
-            document.getElementById('xp-stat').textContent = this.xp;
-            document.getElementById('xp-next-stat').textContent = this.xpToNextLevel;
-            document.getElementById('xp-bar').style.width = `${(this.xp / this.xpToNextLevel) * 100}%`;
+             const insightStat = document.getElementById('insight-stat');
+             const creditsStat = document.getElementById('credits-stat');
+             const levelStat = document.getElementById('player-level-stat');
+             const xpStat = document.getElementById('xp-stat');
+             const xpNextStat = document.getElementById('xp-next-stat');
+             const xpBar = document.getElementById('xp-bar');
+
+             if(insightStat) insightStat.textContent = this.insightPoints;
+             if(creditsStat) creditsStat.textContent = this.computeCredits;
+             if(levelStat) levelStat.textContent = this.playerLevel;
+             if(xpStat) xpStat.textContent = this.xp;
+             if(xpNextStat) xpNextStat.textContent = this.xpToNextLevel;
+             if(xpBar) xpBar.style.width = `${(this.xp / this.xpToNextLevel) * 100}%`;
         },
         initNavigation() {
             document.querySelectorAll('.nav-button').forEach(button => {
-                button.addEventListener('click', () => {
-                    const screenId = button.dataset.screen;
+                 const newButton = button.cloneNode(true);
+                 button.parentNode.replaceChild(newButton, button);
+                newButton.addEventListener('click', () => {
+                    const screenId = newButton.dataset.screen;
                     this.showScreen(screenId);
                     document.querySelectorAll('.nav-button').forEach(btn => btn.classList.remove('active'));
-                    button.classList.add('active');
+                    newButton.classList.add('active');
                 });
             });
-            document.getElementById('back-to-map-btn').addEventListener('click', () => this.showScreen('world-map-screen'));
+             const backButton = document.getElementById('back-to-map-btn');
+             if(backButton && !backButton.dataset.listenerAdded) {
+                 backButton.addEventListener('click', () => this.showScreen('world-map-screen'));
+                 backButton.dataset.listenerAdded = 'true';
+             }
         },
         initLevelSelectors() {
             document.querySelectorAll('.level-node.active').forEach(node => {
@@ -432,28 +524,42 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!challenge) return;
             this.hintUsedThisLevel = false;
             const visContainer = document.getElementById('vis-container');
-            visContainer.innerHTML = '';
+             if(visContainer) visContainer.innerHTML = '';
             for (let i = 0; i < challengeId - 1; i++) {
                 if (this.challenges[i].vis) this.addVis(this.challenges[i].vis, true); 
             }
-            document.getElementById('level-title').textContent = `${challengeId}: ${challenge.title}`;
-            document.getElementById('instructions-content').innerHTML = challenge.instructions;
-            document.getElementById('hint-cost').textContent = challenge.hintCost;
-            this.updateHintButtonState();
-            
-            const codeWithInput = challenge.code.replace('[_]', `<span class="code-input-container"><input type="text" id="code-input" class="code-input-field" autocomplete="off" spellcheck="false" autofocus></span>`);
-            document.getElementById('code-block').innerHTML = codeWithInput;
+             const levelTitle = document.getElementById('level-title');
+             const instructionsContent = document.getElementById('instructions-content');
+             const hintCost = document.getElementById('hint-cost');
+             const codeBlock = document.getElementById('code-block');
 
-            document.getElementById('code-input').addEventListener('keydown', (e) => {
-                if (e.key === 'Enter') { e.preventDefault(); this.checkAnswer(); }
-            });
-            this.showScreen('level-screen');
-            setTimeout(() => { const input = document.getElementById('code-input'); if (input) input.focus(); }, 50);
+             if(levelTitle) levelTitle.textContent = `${challengeId}: ${challenge.title}`;
+             if(instructionsContent) {
+                 instructionsContent.innerHTML = challenge.instructions; // Clear old hints
+             }
+             if(hintCost) hintCost.textContent = challenge.hintCost;
+             
+             if(codeBlock) {
+                 const codeWithInput = challenge.code.replace('[_]', `<span class="code-input-container"><input type="text" id="code-input" class="code-input-field" autocomplete="off" spellcheck="false" autofocus></span>`);
+                 codeBlock.innerHTML = codeWithInput;
+
+                 const inputField = document.getElementById('code-input');
+                 if (inputField) {
+                     // Ensure only one listener
+                     inputField.onkeydown = (e) => {
+                         if (e.key === 'Enter') { e.preventDefault(); this.checkAnswer(); }
+                     };
+                 }
+             }
+             
+             this.updateHintButtonState();
+             this.showScreen('level-screen');
+             setTimeout(() => { const input = document.getElementById('code-input'); if (input) input.focus(); }, 50);
         },
         useHint() {
             const challenge = this.challenges[this.currentChallenge - 1];
             if (!challenge || this.hintUsedThisLevel || this.insightPoints < challenge.hintCost) {
-                if(!challenge || this.insightPoints < challenge.hintCost) this.showNotification('Not enough Insight Points!', 'error');
+                 if(!challenge || this.insightPoints < challenge.hintCost) this.showNotification('Not enough Insight!', 'error');
                 return;
             }
             this.insightPoints -= challenge.hintCost;
@@ -463,10 +569,12 @@ document.addEventListener('DOMContentLoaded', () => {
             this.saveProgressToServer();
 
             const instructions = document.getElementById('instructions-content');
-            const hintBox = document.createElement('div');
-            hintBox.className = "hint-box";
-            hintBox.innerHTML = `<strong style="color: var(--accent-blue);">Hint:</strong> ${challenge.hint}`;
-            instructions.appendChild(hintBox);
+             if(instructions) {
+                 const hintBox = document.createElement('div');
+                 hintBox.className = "hint-box";
+                 hintBox.innerHTML = `<strong style="color: var(--accent-blue);">Hint:</strong> ${challenge.hint}`;
+                 instructions.appendChild(hintBox);
+             }
         },
         updateHintButtonState() {
             const hintButton = document.getElementById('hint-button');
@@ -497,7 +605,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 visEl.style.height = style.height;
                 visEl.style.color = style.textColor;
                 visEl.textContent = item.label;
-                
+                visEl.style.fontWeight = 'bold'; 
+                visEl.style.textAlign = 'center';
+                visEl.style.borderRadius = '5px';
+                visEl.style.padding = '5px';
+                visEl.style.marginBottom = '5px';
+                visEl.style.width = '90%';
+
                 visEl.classList.add('fade-in');
                 setTimeout(() => visContainer.appendChild(visEl), isInstant ? 0 : 100 * index);
             });
@@ -511,8 +625,15 @@ document.addEventListener('DOMContentLoaded', () => {
             const notif = document.getElementById('notification');
             if (!notif) return;
             notif.textContent = message;
-            notif.className = 'show';
+            notif.className = 'show'; 
             notif.style.backgroundColor = type === 'error' ? 'var(--accent-red)' : type === 'success' ? 'var(--accent-green)' : 'var(--accent-blue)';
+            
+            // Auto-hide after 3 seconds
+            setTimeout(() => {
+                if (notif.textContent === message) { // Only hide if it's the same message
+                    notif.classList.remove('show');
+                }
+            }, 3000);
         }
     };
     game.init();
