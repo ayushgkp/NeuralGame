@@ -1,15 +1,13 @@
- <!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Neural Architect: The Grand Tour</title>
-    <!-- This path should be correct if your folder structure is correct -->
     <link rel="stylesheet" href="css/NeuralArena.css"> 
 </head>
 <body>
     <div id="game-container">
-        <!-- Persistent Header -->
         <header id="main-header">
             <div class="header-left">
                 <h1 class="game-title">Neural Architect 🧠</h1>
@@ -22,17 +20,16 @@
                     <div id="xp-bar"></div>
                     <div class="xp-text">XP: <span id="xp-stat">0</span> / <span id="xp-next-stat">100</span></div>
                 </div>
+                <button id="debug-toggle" style="background: var(--accent-red); color: white; border: none; border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 0.8rem; margin-left: 20px;">
+                    Debug Mode: OFF
+                </button>
             </div>
         </header>
 
-        <!-- Main Content Area -->
         <main id="main-content">
-            <!-- World Map Screen -->
             <div id="world-map-screen" class="game-screen active-screen">
-                <!-- Worlds will be generated here by JavaScript -->
-            </div>
+                </div>
 
-            <!-- Level Screen -->
             <div id="level-screen" class="game-screen">
                 <button id="back-to-map-btn" class="back-button">← World Map</button>
                 <div class="level-container">
@@ -57,22 +54,32 @@
                 </div>
             </div>
 
-            <!-- Data Garden Screen -->
             <div id="data-garden-screen" class="game-screen">
                 <h1 class="screen-title">🌱 The Data Garden</h1>
                 <p class="screen-subtitle">Cultivate your datasets and brew augmentation potions.</p>
+                
+                <div id="memory-rig-panel">
+                    <div class="rig-header">
+                        <h3>Training Rig Memory</h3>
+                        <div id="crystal-slot" class="slot-empty">
+                            💎 Memory Crystal: EMPTY
+                        </div>
+                    </div>
+                    <div class="memory-bar-container">
+                        <div id="memory-bar-fill"></div>
+                    </div>
+                    <div id="memory-bar-text">0% Used</div>
+                </div>
+
                 <div class="garden-layout">
                     <div id="dataset-plots" class="plots-container">
-                        <!-- Dataset plots will be generated here -->
-                    </div>
+                        </div>
                     <div id="potions-shed" class="potions-container">
                         <h2 class="potions-title">Potion Brewery</h2>
-                        <!-- Potion toggles will be generated here -->
-                    </div>
+                        </div>
                 </div>
             </div>
 
-            <!-- Shop Screen -->
             <div id="shop-screen" class="game-screen">
                 <h1 class="screen-title">🛒 Store</h1>
                 <p class="screen-subtitle">Spend your Compute Credits on powerful upgrades.</p>
@@ -81,31 +88,91 @@
                     <div class="store-section">
                         <h2 class="section-title">Pre-Trained Models</h2>
                         <div id="shop-items" class="shop-container">
-                            <!-- Shop items for models will be generated here -->
-                        </div>
+                            </div>
                     </div>
                     <div class="store-section">
                         <h2 class="section-title">Project Blueprints</h2>
                         <div id="project-items" class="project-container">
-                            <!-- Project items will be generated here -->
+                            </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div id="nas-screen" class="game-screen">
+                <h1 class="screen-title">🧠 NAS Lab</h1>
+                <p class="screen-subtitle">Use Compute Credits to automatically evolve a new architecture.</p>
+                <div class="nas-layout">
+                    <div class="nas-panel nas-controls">
+                        <h2>Evolution Preferences</h2>
+                        <div class="slider-container">
+                            <label for="nas-accuracy">Accuracy: <span id="nas-accuracy-val">50</span>%</label>
+                            <input type="range" id="nas-accuracy" class="nas-slider" min="0" max="100" value="50">
+                        </div>
+                        <div class="slider-container">
+                            <label for="nas-speed">Speed: <span id="nas-speed-val">30</span>%</label>
+                            <input type="range" id="nas-speed" class="nas-slider" min="0" max="100" value="30">
+                        </div>
+                        <div class="slider-container">
+                            <label for="nas-efficiency">Efficiency (Size): <span id="nas-efficiency-val">20</span>%</label>
+                            <input type="range" id="nas-efficiency" class="nas-slider" min="0" max="100" value="20">
+                        </div>
+                        
+                        <div class="nas-cost">
+                            <strong>Estimated Cost:</strong> <span id="nas-cost-display">10000</span> CC
+                        </div>
+                        
+                        <button id="start-nas-button" class="nas-button">Start Evolution</button>
+                    </div>
+                    <div class="nas-results">
+                        <div class="nas-panel">
+                            <h2>Evolution Progress</h2>
+                            <div id="nas-progress" class="nas-progress">
+                                <div class="progress-bar">
+                                    <div id="nas-progress-fill" class="progress-fill"></div>
+                                </div>
+                                <div id="nas-status">Ready to evolve...</div>
+                            </div>
+                            <div id="nas-results-display" class="nas-results-display">
+                                </div>
                         </div>
                     </div>
                 </div>
             </div>
+
         </main>
 
-        <!-- Persistent Footer Navigation -->
         <footer id="main-footer">
             <button class="nav-button active" data-screen="world-map-screen">🌐 World Map</button>
             <button class="nav-button" data-screen="data-garden-screen">🌱 Data Garden</button>
             <button class="nav-button" data-screen="shop-screen">🛒 Store</button>
+            <button class="nav-button" data-screen="nas-screen">🧠 NAS Lab</button>
         </footer>
 
-        <!-- Notification Toast -->
         <div id="notification"></div>
-    </div>
+        
+        <div id="training-result-modal">
+            <div class="modal-content">
+                <span id="modal-close-btn">&times;</span>
+                <h2>Training Complete!</h2>
+                <div class="result-line">
+                    <strong>Model:</strong>
+                    <span id="result-model-name"></span>
+                </div>
+                <div class="result-line">
+                    <strong>Dataset:</strong>
+                    <span id="result-dataset-name"></span>
+                </div>
+                <div class="result-line">
+                    <strong>Time Taken:</strong>
+                    <span id="result-time"></span>
+                </div>
+                <div class="result-line accuracy">
+                    <strong>Accuracy:</strong>
+                    <span id="result-accuracy"></span>
+                </div>
+            </div>
+        </div>
 
-    <!-- CORRECTED SCRIPT PATH -->
-    <script src="Javascript/NeuralArena.js"></script>
+    </div> <script src="Javascript/NeuralArena.js"></script>
 </body>
 </html>

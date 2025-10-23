@@ -1,22 +1,47 @@
 document.addEventListener('DOMContentLoaded', () => {
     const game = {
-        backendUrl: 'http://127.0.0.1:5000', // Use localhost if 127.0.0.1 fails
+        backendUrl: 'http://localhost:5000', // Use localhost for better compatibility
 
         // --- PLAYER STATE ---
         playerLevel: 1, xp: 0, xpToNextLevel: 100, insightPoints: 100,
-        computeCredits: 1000, hintUsedThisLevel: false, equippedModel: null,
+        computeCredits: 10000, // Start with more for testing
+        hintUsedThisLevel: false, equippedModel: null,
         equippedProject: null, uploadedDatasets: [], purchasedItems: [],
         currentChallenge: 1,
         
-        // --- NEW: Potion State ---
-        activePotions: [], // Stores IDs of selected potions
+        // --- Potion State ---
+        activePotions: [], 
 
-        worlds: [ /* ... worlds data ... */ 
+        // --- NAS Lab State (from friend's code) ---
+        nasUnlocked: false, 
+        nasPreferences: { accuracy: 50, speed: 30, efficiency: 20 },
+        
+        // --- Debug Mode State (from friend's code) ---
+        debugMode: false,
+
+        // NEW: Model Memory Costs (as a percentage)
+        // SimpleCNN = 10%
+        // VGG = 120% (requires crystal)
+        // ResNet = 110% (requires crystal)
+        // Inception = 100% (just barely fits)
+        // EfficientNet = 40%
+        // Memory Crystal = 1000% (virtually unlimited)
+        memoryCosts: {
+            'SimpleCNN': 10,
+            'vgg16': 120,
+            'resnet50': 110,
+            'efficientnet': 40,
+            'inception': 100,
+            'default': 10
+        },
+
+        worlds: [
             { id: 1, name: "CNN Fundamentals", unlocked: true },
             { id: 2, name: "The Training Pipeline", unlocked: false, unlocksAt: 4 },
             { id: 3, name: "Advanced Techniques", unlocked: false, unlocksAt: 6 },
         ],
-        challenges: [ /* ... challenges data ... */ 
+        challenges: [
+            // Note: Answers are removed from the frontend. The backend is the source of truth.
             { world: 1, title: "The First Layer", instructions: `<p>Welcome, Architect! Let's build a CNN.</p><p>Every CNN starts with a convolutional layer, <code class='code-class'>Conv2d</code>. It needs <code class='code-variable'>in_channels</code> (3 for RGB) and produces <code class='code-variable'>out_channels</code>.</p><p class="goal"><strong>Goal:</strong> Use <code class='code-function'>nn.Conv2d</code> with <code class='code-number'>16</code> output channels and a kernel size of <code class='code-number'>3</code>.</p>`, code: `class SimpleCNN(nn.Module):<br>    def __init__(self):<br>        super().__init__()<br>        self.conv1 = [_]`, hint: "Use all three keyword arguments: in_channels, out_channels, and kernel_size.", hintCost: 50, insightReward: 50, vis: { type: 'conv', label: 'Conv2D (16)', size: 90 } },
             { world: 1, title: "Activation", instructions: `<p>After a convolution, we need a non-linear activation function. The most common is <code class='code-class'>ReLU</code>.</p><p class="goal"><strong>Goal:</strong> Add a <code class='code-function'>nn.ReLU()</code> layer.</p>`, code: `class SimpleCNN(nn.Module):<br>    def __init__(self):<br>        # ...<br>        self.conv1 = nn.Conv2d(...)<br>        self.relu1 = [_]`, hint: "This function is called with empty parentheses.", hintCost: 50, insightReward: 50, vis: { type: 'relu', label: 'ReLU' } },
             { world: 1, title: "Pooling", instructions: `<p>Now, let's add a <code class='code-class'>MaxPool2d</code> layer to downsample the feature map, making the network faster and more robust.</p><p class="goal"><strong>Goal:</strong> Add a <code class='code-function'>nn.MaxPool2d</code> layer with a kernel size of <code class='code-number'>2</code>.</p>`, code: `class SimpleCNN(nn.Module):<br>    def __init__(self):<br>        # ...<br>        self.relu1 = nn.ReLU()<br>        self.pool1 = [_]`, hint: "The argument for the window size is kernel_size.", hintCost: 50, insightReward: 50, vis: { type: 'pool', label: 'MaxPool2D', size: 45 } },
@@ -36,20 +61,19 @@ document.addEventListener('DOMContentLoaded', () => {
             { world: 3, title: "Transfer Learning", instructions: `<p>Instead of building from scratch, we can use a powerful, pre-trained model like <code class='code-class'>ResNet</code>. This is **Transfer Learning**.</p><p class="goal"><strong>Goal:</strong> Load a pre-trained <code class='code-function'>models.resnet18</code> from the store.</p>`, code: `# Load a powerful pre-trained model<br>model = [_]`, hint: "The argument to get pre-trained weights is weights='IMAGENET1K_V1'.", hintCost: 100, insightReward: 250, vis: { type: 'model', label: 'ResNet-18' } },
             { world: 3, title: "Learning Rate Scheduler", instructions: `<p>A scheduler adjusts the learning rate during training. A common strategy is to decrease it over time to fine-tune the model.</p><p class="goal"><strong>Goal:</strong> Create a <code class='code-function'>StepLR</code> scheduler that reduces the LR by a factor of 0.1 every 5 epochs.</p>`, code: `optimizer = optim.Adam(...)<br>scheduler = [_]`, hint: "The scheduler needs the optimizer, a step_size, and a gamma factor.", hintCost: 100, insightReward: 250, vis: { type: 'optim', label: 'LR Scheduler' } },
         ],
-
         datasets: [ { id: 'cifar10', name: 'CIFAR-10', icon: '🖼️', description: 'Default starter dataset.' } ],
         shopItems: [
             { id: 'vgg16', name: 'VGG-16', icon: '🏛️', cost: 1500, purchased: false, stats: { acc: '92%', speed: 'Medium' } },
             { id: 'resnet50', name: 'ResNet-50', icon: '🚀', cost: 2500, purchased: false, stats: { acc: '94%', speed: 'Fast' } },
             { id: 'efficientnet', name: 'EfficientNet', icon: '⚡', cost: 4000, purchased: false, stats: { acc: '95%', speed: 'Very Fast' } },
-            { id: 'inception', name: 'InceptionV3', icon: '🌀', cost: 3500, purchased: false, stats: { acc: '94%', speed: 'Medium' } }
+            { id: 'inception', name: 'InceptionV3', icon: '🌀', cost: 3500, purchased: false, stats: { acc: '94%', speed: 'Medium' } },
+            // --- NEW: Memory Crystal Item ---
+            { id: 'memory_crystal', name: 'Memory Crystal', icon: '💎', cost: 10000, purchased: false, stats: { acc: 'N/A', speed: 'Slower' }, description: 'Enables training massive models with low memory via checkpointing.' }
         ],
         projectItems: [
             { id: 'img_classification', name: 'Image Classifier', icon: '📸', cost: 5000, purchased: false, description: 'A complete blueprint for a state-of-the-art image classification project.' },
             { id: 'object_detection', name: 'Object Detector', icon: '🎯', cost: 8000, purchased: false, description: 'Learn to build a project that can find and identify objects in an image.' }
         ],
-
-        // --- NEW: Define Available Potions ---
         potions: [
             { id: 'random_flip', name: 'Flipping Charm', icon: '↔️', description: 'Randomly flips images horizontally.', cost: 50 },
             { id: 'random_rotation', name: 'Potion of Rotation', icon: '🔄', description: 'Randomly rotates images slightly.', cost: 75 },
@@ -57,7 +81,8 @@ document.addEventListener('DOMContentLoaded', () => {
         ],
         
         init() {
-            const self = this; 
+            const self = this; // Store the context of the 'game' object
+            
             fetch(`${this.backendUrl}/get-progress`)
                 .then(response => response.json())
                 .then(data => {
@@ -65,27 +90,54 @@ document.addEventListener('DOMContentLoaded', () => {
                     self.purchasedItems = self.purchasedItems || []; 
                     self.shopItems.forEach(item => item.purchased = self.purchasedItems.includes(item.id));
                     self.projectItems.forEach(item => item.purchased = self.purchasedItems.includes(item.id));
+                    // Also sync memory crystal
+                    self.memoryCrystalActive = self.purchasedItems.includes('memory_crystal');
                     self.renderAll();
                 })
                 .catch(error => {
                     console.error('Error loading data:', error);
                     self.showNotification('Error: Could not connect to backend!', 'error');
-                    self.renderAll(); 
+                    self.renderAll(); // Render with defaults even if backend fails
                 });
             
             this.initEventListeners();
+            this.initDebugMode(); // Initialize debug mode
         },
         
         renderAll() {
-            this.renderWorldMap(); this.renderShop(); this.renderProjectStore();
-            this.renderDataGarden(); this.updatePlayerStats(); this.initNavigation();
+            this.renderWorldMap(); 
+            this.renderShop(); 
+            this.renderProjectStore();
+            this.renderDataGarden(); 
+            this.renderNAS(); // Render NAS screen
+            this.updatePlayerStats(); 
+            this.initNavigation();
+            this.updateMemoryBar(); // NEW: Update memory bar on load
         },
 
         initEventListeners() {
              const runButton = document.getElementById('run-button');
              const hintButton = document.getElementById('hint-button');
-             if(runButton) runButton.addEventListener('click', () => this.checkAnswer());
-             if(hintButton) hintButton.addEventListener('click', () => this.useHint());
+             // Check if buttons exist before adding listeners
+             // This prevents errors when switching to screens that don't have them
+             if(runButton && !runButton.dataset.listenerAttached) {
+                 runButton.addEventListener('click', () => this.checkAnswer());
+                 runButton.dataset.listenerAttached = 'true';
+             }
+             if(hintButton && !hintButton.dataset.listenerAttached) {
+                 hintButton.addEventListener('click', () => this.useHint());
+                 hintButton.dataset.listenerAttached = 'true';
+             }
+
+             // NEW: Add listener for the modal close button
+             const modalClose = document.getElementById('modal-close-btn');
+             if(modalClose && !modalClose.dataset.listenerAttached) {
+                 modalClose.addEventListener('click', () => {
+                     document.getElementById('training-result-modal').classList.remove('show');
+                 });
+                 modalClose.dataset.listenerAttached = 'true';
+             }
+             // NAS Listeners are initialized in renderNAS
         },
 
         saveProgressToServer() {
@@ -94,7 +146,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 computeCredits: this.computeCredits, currentChallenge: this.currentChallenge,
                 equippedModel: this.equippedModel, equippedProject: this.equippedProject,
                 uploadedDatasets: this.uploadedDatasets, purchasedItems: this.purchasedItems,
-                // Note: We don't save activePotions, they reset each session
+                memoryCrystalActive: this.memoryCrystalActive
             };
             fetch(`${this.backendUrl}/save-progress`, {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -105,7 +157,6 @@ document.addEventListener('DOMContentLoaded', () => {
             .catch(error => console.error('Error saving progress:', error));
         },
 
-        // --- MODIFIED FUNCTION: Renders datasets AND potions ---
         renderDataGarden() {
             const plotsContainer = document.getElementById('dataset-plots');
             const potionsContainer = document.getElementById('potions-shed'); 
@@ -149,7 +200,7 @@ document.addEventListener('DOMContentLoaded', () => {
             potionsContainer.innerHTML = '<h2 class="potions-title">Potion Brewery</h2>'; 
             this.potions.forEach(potion => {
                 const potionEl = document.createElement('div');
-                potionEl.className = 'potion-item'; // Add a class for styling
+                potionEl.className = 'potion-item';
                 potionEl.innerHTML = `
                     <label>
                         <input type="checkbox" class="potion-checkbox" value="${potion.id}" ${this.activePotions.includes(potion.id) ? 'checked' : ''}>
@@ -160,10 +211,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 `;
                 potionsContainer.appendChild(potionEl);
             });
-
+            
+            this.updateMemoryBar(); // NEW: Update memory bar when garden is rendered
             this.initDataGardenUpload();
             this.initTrainButtons(); 
-            this.initPotionSelectors(); // Initialize potion checkboxes
+            this.initPotionSelectors(); 
         },
         
         initDataGardenUpload() { 
@@ -183,7 +235,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             if (result.status === 'success') {
                                 this.showNotification(result.message, 'success');
                                 this.uploadedDatasets = result.datasets;
-                                this.renderDataGarden(); // Re-render to show the new dataset
+                                this.renderDataGarden();
                             } else { this.showNotification(`Error: ${result.message}`, 'error'); }
                         })
                         .catch(error => this.showNotification('Upload failed! Server error.', 'error'));
@@ -192,7 +244,6 @@ document.addEventListener('DOMContentLoaded', () => {
             fileInput.dataset.listenerAdded = 'true';
         },
 
-        // --- NEW FUNCTION: To handle potion checkbox changes ---
         initPotionSelectors() {
             document.querySelectorAll('.potion-checkbox').forEach(checkbox => {
                  const newCheckbox = checkbox.cloneNode(true);
@@ -208,12 +259,10 @@ document.addEventListener('DOMContentLoaded', () => {
                         this.activePotions = this.activePotions.filter(id => id !== potionId);
                     }
                      console.log("Activated potions:", this.activePotions);
-                    // We calculate cost *during* training now
                 });
             });
         },
 
-        // --- MODIFIED FUNCTION: Sends active potions to backend ---
         initTrainButtons() {
             document.querySelectorAll('.train-button').forEach(button => {
                 const newButton = button.cloneNode(true);
@@ -225,7 +274,15 @@ document.addEventListener('DOMContentLoaded', () => {
                         this.showNotification('You must equip a model first!', 'error'); return;
                     }
                     
-                    // Calculate Potion Costs
+                    // --- NEW MEMORY CHECK ---
+                    const modelCost = this.memoryCosts[this.equippedModel] || 10;
+                    const crystalActive = this.purchasedItems.includes('memory_crystal');
+                    if (modelCost > 100 && !crystalActive) {
+                        this.showNotification('Training Failed: Memory Overload! Equip a Memory Crystal to train this model.', 'error');
+                        return; // Stop the training
+                    }
+                    // --- END MEMORY CHECK ---
+                    
                     let totalPotionCost = 0;
                     this.activePotions.forEach(potionId => {
                         totalPotionCost += this.potions.find(p => p.id === potionId)?.cost || 0;
@@ -236,7 +293,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         return;
                     }
                     
-                    // Confirm and Deduct Cost (using simple confirm for now)
+                    // Use a simple prompt for now, replace with modal later
                     const confirmTrain = confirm(`Training cost: ${totalPotionCost} CC for potions. Proceed?`);
                     if (!confirmTrain) return;
 
@@ -244,7 +301,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     this.updatePlayerStats();
                     this.saveProgressToServer(); 
 
-                    this.showNotification(`Training ${this.equippedModel} on ${datasetName} with potions...`, 'unlock');
+                    // --- MODIFIED: Show better "loading" message ---
+                    this.showNotification(`Training ${this.equippedModel} on ${datasetName}... This may take a moment.`, 'unlock');
                     
                     fetch(`${this.backendUrl}/train-model`, {
                         method: 'POST',
@@ -252,25 +310,30 @@ document.addEventListener('DOMContentLoaded', () => {
                         body: JSON.stringify({ 
                             modelName: this.equippedModel, 
                             datasetName: datasetName,
-                            activePotions: this.activePotions // Send selected potions
+                            activePotions: this.activePotions
                         })
                     })
                     .then(response => response.json())
                     .then(result => {
                         if (result.status === 'success') {
-                            this.showNotification(`Training Complete! Accuracy: ${result.accuracy}`, 'success');
+                            // --- NEW: SHOW THE MODAL INSTEAD OF A NOTIFICATION ---
+                            document.getElementById('result-model-name').textContent = this.equippedModel;
+                            document.getElementById('result-dataset-name').textContent = datasetName;
+                            document.getElementById('result-accuracy').textContent = result.accuracy;
+                            document.getElementById('result-time').textContent = `${parseFloat(result.time_taken).toFixed(2)} seconds`;
+                            
+                            document.getElementById('training-result-modal').classList.add('show');
+                            // --- END OF NEW CODE ---
                         } else {
                             this.showNotification(`Training Failed: ${result.message}`, 'error');
-                            // Refund potion cost on failure
-                            this.computeCredits += totalPotionCost;
+                            this.computeCredits += totalPotionCost; // Refund
                             this.updatePlayerStats();
                             this.saveProgressToServer();
                         }
                     })
                     .catch(error => {
                         this.showNotification('Training failed! Server error.', 'error');
-                         // Refund potion cost on failure
-                        this.computeCredits += totalPotionCost;
+                        this.computeCredits += totalPotionCost; // Refund
                         this.updatePlayerStats();
                         this.saveProgressToServer();
                     });
@@ -281,22 +344,21 @@ document.addEventListener('DOMContentLoaded', () => {
         renderWorldMap() {
             const container = document.getElementById('world-map-screen');
             if (!container) return;
-            
             container.innerHTML = '<h1 class="screen-title">🗺️ World Map</h1>';
-            
             this.worlds.forEach(world => {
+                if (!world.unlocked && !this.debugMode) return; 
                 const worldEl = document.createElement('div');
-                worldEl.className = `world ${world.unlocked ? '' : 'locked'}`;
+                worldEl.className = `world ${world.unlocked || this.debugMode ? '' : 'locked'}`;
                 
                 const challengesForWorld = this.challenges.filter(c => c.world === world.id);
                 const completedInWorld = challengesForWorld.filter(c => (this.challenges.indexOf(c) + 1) < this.currentChallenge).length;
-                const status = world.unlocked ? `${completedInWorld} / ${challengesForWorld.length} Complete` : `Unlocks at Player Level ${world.unlocksAt}`;
+                const status = (world.unlocked || this.debugMode) ? `${completedInWorld} / ${challengesForWorld.length} Complete` : `Unlocks at Player Level ${world.unlocksAt}`;
 
                 const levelsHTML = challengesForWorld.map((challenge, idx) => {
                     const globalIdx = this.challenges.indexOf(challenge) + 1;
                     let statusClass = 'locked';
                     if (globalIdx < this.currentChallenge) statusClass = 'completed';
-                    else if (globalIdx === this.currentChallenge && world.unlocked) statusClass = 'active';
+                    else if (globalIdx === this.currentChallenge || this.debugMode) statusClass = 'active'; 
                     
                     return `<div class="level-node ${statusClass}" data-challenge="${globalIdx}">${globalIdx}</div>`;
                 }).join('<div class="path-line"></div>');
@@ -308,10 +370,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     </div>
                     <div class="level-path">${levelsHTML}</div>
                 `;
-                
                 container.appendChild(worldEl);
             });
-            
             this.initLevelSelectors();
         },
 
@@ -321,7 +381,9 @@ document.addEventListener('DOMContentLoaded', () => {
             
             container.innerHTML = this.shopItems.map(item => {
                 let buttonHtml = '';
-                if (!item.purchased) {
+                const purchased = this.purchasedItems.includes(item.id) || this.debugMode;
+
+                if (!purchased) {
                     buttonHtml = `<button class="buy-button" data-item-id="${item.id}" ${this.computeCredits < item.cost ? 'disabled' : ''}>Buy (${item.cost} C)</button>`;
                 } else if (this.equippedModel === item.id) {
                     buttonHtml = `<button class="equipped-button" disabled>Equipped</button>`;
@@ -330,10 +392,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
 
                 return `
-                    <div class="shop-item ${item.purchased ? 'purchased' : ''}">
+                    <div class="shop-item ${purchased ? 'purchased' : ''}">
                         <div class="shop-icon">${item.icon}</div>
                         <h3>${item.name}</h3>
-                        <p>Accuracy: ${item.stats.acc} | Speed: ${item.stats.speed}</p>
+                        ${item.stats.acc !== 'N/A' ? `<p>Accuracy: ${item.stats.acc} | Speed: ${item.stats.speed}</p>` : `<p>${item.description}</p>`}
                         ${buttonHtml}
                     </div>
                 `;
@@ -347,8 +409,10 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!container) return;
             
             container.innerHTML = this.projectItems.map(item => {
-                let buttonHtml = '';
-                 if (!item.purchased) {
+                 let buttonHtml = '';
+                 const purchased = this.purchasedItems.includes(item.id) || this.debugMode;
+
+                 if (!purchased) {
                     buttonHtml = `<button class="buy-button" data-item-id="${item.id}" data-item-type="project" ${this.computeCredits < item.cost ? 'disabled' : ''}>Buy (${item.cost} C)</button>`;
                 } else if (this.equippedProject === item.id) {
                     buttonHtml = `<button class="equipped-button" disabled>Equipped</button>`;
@@ -357,7 +421,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
 
                 return `
-                    <div class="project-item ${item.purchased ? 'purchased' : ''}">
+                    <div class="project-item ${purchased ? 'purchased' : ''}">
                         <div class="project-icon">${item.icon}</div>
                         <h3>${item.name}</h3>
                         <p>${item.description}</p>
@@ -388,6 +452,12 @@ document.addEventListener('DOMContentLoaded', () => {
                             if (!this.purchasedItems.includes(item.id)) {
                                 this.purchasedItems.push(item.id);
                             }
+                            // Special case for memory crystal
+                            if (item.id === 'memory_crystal') {
+                                this.memoryCrystalActive = true;
+                                this.updateMemoryBar(); // NEW: Update bar immediately
+                            }
+                            
                             this.showNotification(`Purchased ${item.name}!`, 'success');
                             this.updatePlayerStats();
                             if (itemType === 'project') this.renderProjectStore(); else this.renderShop();
@@ -400,6 +470,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         } else {
                             this.equippedModel = itemId;
                             this.renderShop();
+                            this.updateMemoryBar(); // NEW: Update bar on equip
                         }
                         this.showNotification(`Equipped ${itemId}!`, 'success');
                         this.saveProgressToServer(); 
@@ -472,13 +543,23 @@ document.addEventListener('DOMContentLoaded', () => {
         checkUnlocks() {
             let updated = false;
             this.worlds.forEach(world => {
-                if (!world.unlocked && this.playerLevel >= world.unlocksAt) {
-                    world.unlocked = true;
-                    this.showNotification(`New World Unlocked: ${world.name}!`, 'unlock');
-                    updated = true;
+                if ((!world.unlocked && this.playerLevel >= world.unlocksAt) || this.debugMode) {
+                    if (!world.unlocked) { // Only show notification if it's newly unlocked
+                        world.unlocked = true;
+                        this.showNotification(`New World Unlocked: ${world.name}!`, 'unlock');
+                        updated = true;
+                    }
                 }
             });
-             if(updated) this.renderWorldMap(); 
+            // Unlock NAS
+            if ((!this.nasUnlocked && this.playerLevel >= 6) || this.debugMode) {
+                 if (!this.nasUnlocked) {
+                    this.showNotification('Advanced Feature Unlocked: NAS Lab!', 'levelup');
+                    updated = true;
+                 }
+                 this.nasUnlocked = true;
+            }
+             if(updated) this.renderAll(); // Re-render everything to show new unlocks
         },
         updatePlayerStats() {
              const insightStat = document.getElementById('insight-stat');
@@ -501,6 +582,11 @@ document.addEventListener('DOMContentLoaded', () => {
                  button.parentNode.replaceChild(newButton, button);
                 newButton.addEventListener('click', () => {
                     const screenId = newButton.dataset.screen;
+                    // Check if NAS is unlocked
+                    if(screenId === 'nas-screen' && !this.nasUnlocked) {
+                        this.showNotification('NAS Lab is locked! Reach Player Level 6.', 'error');
+                        return;
+                    }
                     this.showScreen(screenId);
                     document.querySelectorAll('.nav-button').forEach(btn => btn.classList.remove('active'));
                     newButton.classList.add('active');
@@ -513,13 +599,19 @@ document.addEventListener('DOMContentLoaded', () => {
              }
         },
         initLevelSelectors() {
-            document.querySelectorAll('.level-node.active').forEach(node => {
+            document.querySelectorAll('.level-node.active, .level-node.completed').forEach(node => {
                 const newNode = node.cloneNode(true);
                 node.parentNode.replaceChild(newNode, node);
-                newNode.addEventListener('click', () => this.loadLevel(parseInt(newNode.dataset.challenge)));
+                newNode.addEventListener('click', () => {
+                    // Allow clicking active or any level in debug mode
+                    if (this.debugMode || newNode.classList.contains('active')) {
+                         this.loadLevel(parseInt(newNode.dataset.challenge));
+                    }
+                });
             });
         },
         loadLevel(challengeId) {
+            this.currentChallenge = challengeId; // Set current challenge
             const challenge = this.challenges[challengeId - 1];
             if (!challenge) return;
             this.hintUsedThisLevel = false;
@@ -545,7 +637,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
                  const inputField = document.getElementById('code-input');
                  if (inputField) {
-                     // Ensure only one listener
                      inputField.onkeydown = (e) => {
                          if (e.key === 'Enter') { e.preventDefault(); this.checkAnswer(); }
                      };
@@ -628,13 +719,295 @@ document.addEventListener('DOMContentLoaded', () => {
             notif.className = 'show'; 
             notif.style.backgroundColor = type === 'error' ? 'var(--accent-red)' : type === 'success' ? 'var(--accent-green)' : 'var(--accent-blue)';
             
-            // Auto-hide after 3 seconds
             setTimeout(() => {
-                if (notif.textContent === message) { // Only hide if it's the same message
+                if (notif.textContent === message) { 
                     notif.classList.remove('show');
                 }
             }, 3000);
+        },
+
+        // NEW: Function to update the Memory Bar UI
+        updateMemoryBar() {
+            const modelId = this.equippedModel || 'default';
+            let cost = this.memoryCosts[modelId] || 10;
+            const crystalActive = this.purchasedItems.includes('memory_crystal');
+
+            const fillBar = document.getElementById('memory-bar-fill');
+            const fillText = document.getElementById('memory-bar-text');
+            const crystalSlot = document.getElementById('crystal-slot');
+
+            if (!fillBar || !fillText || !crystalSlot) return; // Exit if UI not loaded
+
+            let capacity = 100;
+            if (crystalActive) {
+                capacity = 1000; // Crystal gives 1000% capacity
+                crystalSlot.textContent = '💎 Memory Crystal: ACTIVE';
+                crystalSlot.className = 'slot-active';
+            } else {
+                crystalSlot.textContent = '💎 Memory Crystal: EMPTY';
+                crystalSlot.className = 'slot-empty';
+            }
+            
+            // If cost exceeds 100% capacity without crystal, cap the bar at 100%
+            let fillPercent = (cost / capacity) * 100;
+            if (cost > 100 && !crystalActive) {
+                fillPercent = 100; // Show 100% full (and red)
+            }
+            
+            fillBar.style.width = `${fillPercent}%`;
+            fillText.textContent = `${cost}% Used / ${capacity}% Capacity`;
+        },
+
+        // --- NEW NAS FUNCTIONS (from friend's code, adapted) ---
+        renderNAS() {
+            const container = document.getElementById('nas-screen');
+            if (!container) return; 
+            
+            // Check if unlocked
+            if (!this.nasUnlocked) {
+                 const nasButton = document.querySelector('.nav-button[data-screen="nas-screen"]');
+                 if(nasButton) nasButton.classList.add('locked');
+            } else {
+                 const nasButton = document.querySelector('.nav-button[data-screen="nas-screen"]');
+                 if(nasButton) nasButton.classList.remove('locked');
+            }
+            
+            this.initNASListeners();
+        },
+        
+        initNASListeners() {
+            const nasButton = document.getElementById('start-nas-button');
+            if (nasButton && !nasButton.dataset.listenerAdded) {
+                nasButton.addEventListener('click', () => this.startNAS());
+                nasButton.dataset.listenerAdded = 'true';
+            }
+            
+            document.querySelectorAll('.nas-slider').forEach(slider => {
+                // Remove old listeners to prevent bugs
+                const newSlider = slider.cloneNode(true);
+                slider.parentNode.replaceChild(newSlider, slider);
+                
+                newSlider.addEventListener('input', (e) => {
+                    const id = e.target.id;
+                    const value = e.target.value;
+                    const valDisplay = document.getElementById(`${id}-val`);
+                    if (valDisplay) valDisplay.textContent = `${value}`;
+                    
+                    if (id.includes('accuracy')) this.nasPreferences.accuracy = parseInt(value);
+                    else if (id.includes('speed')) this.nasPreferences.speed = parseInt(value);
+                    else if (id.includes('efficiency')) this.nasPreferences.efficiency = parseInt(value);
+                    
+                    this.updateNASCost();
+                });
+            });
+        },
+        
+        updateNASCost() {
+            // Simple cost calculation
+            const cost = 5000 + (this.nasPreferences.accuracy * 100) + (this.nasPreferences.speed * 50) + (this.nasPreferences.efficiency * 50);
+            const costDisplay = document.getElementById('nas-cost-display');
+            if(costDisplay) costDisplay.textContent = `${cost} CC`;
+        },
+        
+        startNAS() {
+            const costDisplay = document.getElementById('nas-cost-display');
+            let cost = 5000; // default
+            if (costDisplay) {
+                cost = parseInt(costDisplay.textContent) || 5000;
+            }
+            
+            if (this.computeCredits < cost) {
+                this.showNotification('Not enough Compute Credits!', 'error');
+                return;
+            }
+            
+            this.computeCredits -= cost;
+            this.updatePlayerStats();
+            this.saveProgressToServer();
+            
+            const nasButton = document.getElementById('start-nas-button');
+            const nasStatus = document.getElementById('nas-status');
+            const progressFill = document.getElementById('nas-progress-fill');
+            const resultsDisplay = document.getElementById('nas-results-display');
+            
+            if (nasButton) nasButton.disabled = true;
+            if (nasStatus) nasStatus.textContent = 'Initializing evolution...';
+            if (progressFill) progressFill.style.width = '0%';
+            if (resultsDisplay) resultsDisplay.innerHTML = '';
+            
+            // Simulate progress
+            let progress = 0;
+            const progressInterval = setInterval(() => {
+                progress += 5;
+                if (progressFill) progressFill.style.width = `${progress}%`;
+                if (nasStatus) nasStatus.textContent = `Evolving generation... ${progress}%`;
+                if (progress >= 95) clearInterval(progressInterval);
+            }, 1000);
+
+            this.showNotification('Starting Neural Architecture Search...', 'unlock');
+            
+            fetch(`${this.backendUrl}/nas`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    preferences: this.nasPreferences,
+                    potions: this.activePotions // Send potions to use for evaluation
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                clearInterval(progressInterval);
+                if (progressFill) progressFill.style.width = '100%';
+                
+                if (data.results && data.results.length > 0) {
+                    if (nasStatus) nasStatus.textContent = `Evolution complete! Found ${data.total_evaluated} architectures.`;
+                    this.showNotification('NAS complete! Best architectures found.', 'success');
+                    
+                    resultsDisplay.innerHTML = data.results.map((res, i) => `
+                        <div class="nas-result-item">
+                            <h3>Rank #${i + 1} (Fitness: ${res.fitness})</h3>
+                            <div class="nas-result-stats">
+                                <div><strong>Accuracy:</strong> ${res.accuracy}%</div>
+                                <div><strong>Speed:</strong> ${res.inference_time} ms</div>
+                                <div><strong>Size:</strong> ${res.model_size} MB</div>
+                            </div>
+                            <p style="font-size: 0.8rem; color: var(--text-muted); margin-top: 10px;">${res.gene_summary}</p>
+                        </div>
+                    `).join('');
+                } else {
+                    if (nasStatus) nasStatus.textContent = 'Search failed or found no valid models.';
+                    this.showNotification('NAS search failed to find a valid model.', 'error');
+                }
+                if (nasButton) nasButton.disabled = false;
+            })
+            .catch(error => {
+                clearInterval(progressInterval);
+                if (nasStatus) nasStatus.textContent = 'Error: Could not connect to NAS server.';
+                if (nasButton) nasButton.disabled = false;
+                this.showNotification('NAS search failed! Server error.', 'error');
+                // Refund cost on failure
+                this.computeCredits += cost;
+                this.updatePlayerStats();
+                this.saveProgressToServer();
+            });
+        },
+        
+        // --- NEW: Debug Mode Function (from friend's code) ---
+        initDebugMode() {
+            const debugToggle = document.getElementById('debug-toggle');
+            if (!debugToggle) return;
+            
+            debugToggle.addEventListener('click', () => {
+                this.debugMode = !this.debugMode;
+                debugToggle.textContent = `Debug Mode: ${this.debugMode ? 'ON' : 'OFF'}`;
+                debugToggle.style.backgroundColor = this.debugMode ? 'var(--accent-green)' : 'var(--accent-red)';
+                
+                if (this.debugMode) {
+                    // Give lots of credits and XP for testing
+                    this.computeCredits = 50000;
+                    this.insightPoints = 1000;
+                    this.playerLevel = 10; // Set high level
+                    this.xp = 0;
+                    this.updatePlayerStats();
+                    this.checkUnlocks(); // This will now unlock everything
+                    this.showNotification('Debug Mode: All features unlocked!', 'levelup');
+                } else {
+                    this.showNotification('Debug Mode: Normal progression restored', 'success');
+                    // This won't re-lock, but it stops the "cheats"
+                    // We'll reset to default and fetch from server
+                    Object.assign(this, {
+                         playerLevel: 1, xp: 0, insightPoints: 100, computeCredits: 1000,
+                         currentChallenge: 1, equippedModel: null, equippedProject: null,
+                         uploadedDatasets: [], purchasedItems: [], memoryCrystalActive: false,
+                         nasUnlocked: false, debugMode: false
+                    });
+                    this.renderAll(); // Re-render UI with the local default state
+                }
+            });
         }
     };
+    
+    // Clean-up/Helper functions from Claude's suggestion, adapted
+    game.renderWorldMap = function() {
+        const container = document.getElementById('world-map-screen');
+        if (!container) return;
+        container.innerHTML = '<h1 class="screen-title">🗺️ World Map</h1>';
+        this.worlds.forEach(world => {
+            if (!world.unlocked && !this.debugMode) return; 
+            const worldEl = document.createElement('div');
+            worldEl.className = `world ${world.unlocked || this.debugMode ? '' : 'locked'}`;
+            const challengesForWorld = this.challenges.filter(c => c.world === world.id);
+            const completedInWorld = challengesForWorld.filter(c => (this.challenges.indexOf(c) + 1) < this.currentChallenge).length;
+            const status = (world.unlocked || this.debugMode) ? `${completedInWorld} / ${challengesForWorld.length} Complete` : `Unlocks at Player Level ${world.unlocksAt}`;
+            const levelsHTML = challengesForWorld.map((challenge, idx) => {
+                const globalIdx = this.challenges.indexOf(challenge) + 1;
+                let statusClass = 'locked';
+                if (globalIdx < this.currentChallenge) statusClass = 'completed';
+                else if (globalIdx === this.currentChallenge || this.debugMode) statusClass = 'active'; 
+                return `<div class="level-node ${statusClass}" data-challenge="${globalIdx}">${globalIdx}</div>`;
+            }).join('<div class="path-line"></div>');
+            worldEl.innerHTML = `
+                <div class="world-header">
+                    <h2 class="world-title">${world.name}</h2>
+                    <span class="world-status">${status}</span>
+                </div>
+                <div class="level-path">${levelsHTML}</div>
+            `;
+            container.appendChild(worldEl);
+        });
+        this.initLevelSelectors();
+    };
+
+    game.renderShop = function() {
+        const container = document.getElementById('shop-items');
+        if (!container) return;
+        container.innerHTML = this.shopItems.map(item => {
+            let buttonHtml = '';
+            const purchased = this.purchasedItems.includes(item.id) || this.debugMode;
+            if (!purchased) {
+                buttonHtml = `<button class="buy-button" data-item-id="${item.id}" ${this.computeCredits < item.cost ? 'disabled' : ''}>Buy (${item.cost} C)</button>`;
+            } else if (this.equippedModel === item.id) {
+                buttonHtml = `<button class="equipped-button" disabled>Equipped</button>`;
+            } else {
+                buttonHtml = `<button class="equip-button" data-item-id="${item.id}">Equip</button>`;
+            }
+            const description = item.stats.acc !== 'N/A' ? `<p>Accuracy: ${item.stats.acc} | Speed: ${item.stats.speed}</p>` : `<p>${item.description}</p>`;
+            return `
+                <div class="shop-item ${purchased ? 'purchased' : ''}">
+                    <div class.shop-icon">${item.icon}</div>
+                    <h3>${item.name}</h3>
+                    ${description}
+                    ${buttonHtml}
+                </div>
+            `;
+        }).join('');
+        this.initShopButtons();
+    };
+
+    game.renderProjectStore = function() {
+        const container = document.getElementById('project-items');
+        if (!container) return;
+        container.innerHTML = this.projectItems.map(item => {
+             let buttonHtml = '';
+             const purchased = this.purchasedItems.includes(item.id) || this.debugMode;
+             if (!purchased) {
+                buttonHtml = `<button class="buy-button" data-item-id="${item.id}" data-item-type="project" ${this.computeCredits < item.cost ? 'disabled' : ''}>Buy (${item.cost} C)</button>`;
+            } else if (this.equippedProject === item.id) {
+                buttonHtml = `<button class="equipped-button" disabled>Equipped</button>`;
+            } else {
+                buttonHtml = `<button class="equip-button" data-item-id="${item.id}" data-item-type="project">Equip</button>`;
+            }
+            return `
+                <div class="project-item ${purchased ? 'purchased' : ''}">
+                    <div class="project-icon">${item.icon}</div>
+                    <h3>${item.name}</h3>
+                    <p>${item.description}</p>
+                    ${buttonHtml}
+                </div>
+            `;
+        }).join('');
+        this.initShopButtons();
+    };
+
     game.init();
 });
