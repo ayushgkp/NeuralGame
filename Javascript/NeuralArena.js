@@ -1182,11 +1182,11 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         },
 
-        // --- Debug Mode Function (Corrected Memory Crystal Logic) ---
+       
+          // --- Debug Mode Function (Corrected Memory Crystal & Item Purchase Logic) ---
         initDebugMode() {
             const debugToggle = document.getElementById('debug-toggle');
-            if (!debugToggle) return;
-             if (debugToggle.dataset.listenerAttached) return;
+            if (!debugToggle || debugToggle.dataset.listenerAttached) return;
 
             debugToggle.addEventListener('click', () => {
                 this.debugMode = !this.debugMode;
@@ -1199,63 +1199,69 @@ document.addEventListener('DOMContentLoaded', () => {
                     this.insightPoints = 1000;
                     this.playerLevel = 10;
                     this.xp = 0;
-                    // --- MODIFIED: Explicitly add crystal ---
-                    if (!this.purchasedItems.includes('memory_crystal')) {
-                        this.purchasedItems.push('memory_crystal');
-                    }
-                    this.memoryCrystalActive = true; // Set active flag
+
+                    // --- MODIFIED: Explicitly add ALL items to purchasedItems ---
+                    this.shopItems.forEach(item => {
+                        if (!this.purchasedItems.includes(item.id)) {
+                            this.purchasedItems.push(item.id);
+                        }
+                    });
+                    this.projectItems.forEach(item => {
+                        if (!this.purchasedItems.includes(item.id)) {
+                            this.purchasedItems.push(item.id);
+                        }
+                    });
                     // --- END MODIFICATION ---
+
+                    // Ensure memory crystal active flag is set
+                    this.memoryCrystalActive = this.purchasedItems.includes('memory_crystal');
 
                     this.updatePlayerStats();
                     this.checkUnlocks(); // Unlock based on level 10
                     this.showNotification('Debug Mode ON: All features unlocked!', 'levelup');
                     // Re-render relevant screens
                     this.renderWorldMap();
-                    this.renderShop(); // Should now show crystal as "Active"
+                    this.renderShop(); // Should show all items as purchased/active
+                    this.renderProjectStore(); // Should show all projects as purchased
                     this.renderNAS(); // Should show NAS unlocked
-                    this.updateMemoryBar(); // IMPORTANT: Update bar *after* setting crystal active
+                    this.updateMemoryBar(); // Update bar *after* setting crystal active
                     this.initNavigation(); // Re-init nav buttons
                 } else {
                     // --- OFF Logic ---
                     this.showNotification('Debug Mode OFF: Normal progression restored', 'success');
                     // Fetch saved state from server to restore accurately
                     fetch(`${this.backendUrl}/get-progress`)
-                        .then(response => response.json())
+                        .then(response => response.ok ? response.json() : Promise.reject('Fetch failed'))
                         .then(data => {
-                            // Reset core state before applying fetched data
+                             // Reset core state before applying fetched data
                             Object.assign(this, {
                                 playerLevel: 1, xp: 0, insightPoints: 100, computeCredits: 1000,
                                 currentChallenge: 1, equippedModel: null, equippedProject: null,
                                 uploadedDatasets: [], purchasedItems: [], memoryCrystalActive: false,
                                 nasUnlocked: false, debugMode: false // Ensure debug is off
                             });
-                             // Manually reset world locks based on level 1 *before* applying fetched data
+                             // Manually reset world locks based on level 1
                             this.worlds.forEach(w => w.unlocked = (w.id === 1));
 
-                            // Now apply fetched data over the reset state
+                            // Apply fetched data
                             Object.assign(this, data);
                             this.purchasedItems = this.purchasedItems || [];
                             this.uploadedDatasets = this.uploadedDatasets || [];
-                            // Sync visual state based on fetched data
+                            // Sync visual state
                             this.shopItems.forEach(item => item.purchased = this.purchasedItems.includes(item.id));
                             this.projectItems.forEach(item => item.purchased = this.purchasedItems.includes(item.id));
                             this.memoryCrystalActive = this.purchasedItems.includes('memory_crystal');
-                            // Re-check unlocks based on the *actual fetched* level
+                            // Re-check unlocks based on fetched level
                             this.checkUnlocks();
                             // Re-render everything
                             this.renderAll();
                         })
                         .catch(error => {
                             console.error('Error fetching progress after debug off:', error);
-                            this.showNotification('Error restoring progress!', 'error');
-                            // Fallback: reset to absolute basic defaults
-                            Object.assign(this, {
-                                playerLevel: 1, xp: 0, insightPoints: 100, computeCredits: 1000,
-                                currentChallenge: 1, equippedModel: null, equippedProject: null,
-                                uploadedDatasets: [], purchasedItems: [], memoryCrystalActive: false,
-                                nasUnlocked: false, debugMode: false
-                            });
-                            this.worlds.forEach(w => w.unlocked = (w.id === 1)); // Lock worlds
+                            this.showNotification('Error restoring progress! Resetting.', 'error');
+                            // Fallback reset
+                            Object.assign(this, { playerLevel: 1, xp: 0, insightPoints: 100, computeCredits: 1000, currentChallenge: 1, equippedModel: null, equippedProject: null, uploadedDatasets: [], purchasedItems: [], memoryCrystalActive: false, nasUnlocked: false, debugMode: false });
+                            this.worlds.forEach(w => w.unlocked = (w.id === 1));
                             this.renderAll();
                         });
                 }
