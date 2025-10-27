@@ -275,15 +275,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 newButton.addEventListener('click', () => {
                     const datasetName = newButton.dataset.datasetName;
-                    if (!this.equippedModel) {
+                    if (!this.equippedModel && datasetName !== 'MNIST') { // Allow training MNIST without equipping SimpleCNN
                         this.showNotification('You must equip a model first!', 'error'); return;
                     }
 
                     // --- NEW MEMORY CHECK ---
-                    const modelCost = this.memoryCosts[this.equippedModel] || 10;
+                    // Use 'SimpleCNN' if no model is equipped (implied for MNIST)
+                    const modelToCheck = this.equippedModel || (datasetName === 'MNIST' ? 'SimpleCNN' : null);
+                    if (!modelToCheck) { // Should not happen if previous check passed, but safeguard
+                         this.showNotification('Error: Cannot determine model for memory check.', 'error'); return;
+                    }
+                    const modelCost = this.memoryCosts[modelToCheck] || 10;
                     const crystalActive = this.purchasedItems.includes('memory_crystal');
                     if (modelCost > 100 && !crystalActive) {
-                        this.showNotification('Training Failed: Memory Overload! Equip a Memory Crystal to train this model.', 'error');
+                        this.showNotification(`Training Failed: Memory Overload! ${modelToCheck} requires ${modelCost}%. Equip a Memory Crystal.`, 'error');
                         return; // Stop the training
                     }
                     // --- END MEMORY CHECK ---
@@ -298,38 +303,41 @@ document.addEventListener('DOMContentLoaded', () => {
                         return;
                     }
 
-                    // Use a simple prompt for now, replace with modal later
-                    const confirmTrain = confirm(`Training cost: ${totalPotionCost} CC for potions. Proceed?`);
+                    const confirmMsg = `Train ${modelToCheck} on ${datasetName}?` + (totalPotionCost > 0 ? ` Potion cost: ${totalPotionCost} CC.` : '');
+                    const confirmTrain = confirm(confirmMsg);
                     if (!confirmTrain) return;
+
 
                     this.computeCredits -= totalPotionCost;
                     this.updatePlayerStats();
                     this.saveProgressToServer();
 
-                    // --- MODIFIED: Show better "loading" message ---
-                    this.showNotification(`Training ${this.equippedModel || 'SimpleCNN'} on ${datasetName}... This may take a moment.`, 'unlock');
+                    this.showNotification(`Training ${modelToCheck} on ${datasetName}... This may take a moment.`, 'unlock');
 
                     fetch(`${this.backendUrl}/train-model`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
-                            modelName: this.equippedModel,
+                            modelName: this.equippedModel, // Backend defaults to SimpleCNN if null
                             datasetName: datasetName,
                             activePotions: this.activePotions
                         })
                     })
-                    .then(response => response.json())
+                    .then(response => {
+                         if (!response.ok) { // Check for HTTP errors first
+                            return response.json().then(err => { throw new Error(err.message || `Server error: ${response.statusText}`); });
+                         }
+                         return response.json();
+                    })
                     .then(result => {
                         if (result.status === 'success') {
-                            // --- NEW: SHOW THE MODAL INSTEAD OF A NOTIFICATION ---
-                            document.getElementById('result-model-name').textContent = this.equippedModel || 'SimpleCNN';
+                            document.getElementById('result-model-name').textContent = modelToCheck;
                             document.getElementById('result-dataset-name').textContent = datasetName;
                             document.getElementById('result-accuracy').textContent = result.accuracy;
                             document.getElementById('result-time').textContent = `${parseFloat(result.time_taken).toFixed(2)} seconds`;
-
                             document.getElementById('training-result-modal').classList.add('show');
-                            // --- END OF NEW CODE ---
                         } else {
+                            // This case might not be reached if using the error check above, but keep as fallback
                             this.showNotification(`Training Failed: ${result.message}`, 'error');
                             this.computeCredits += totalPotionCost; // Refund
                             this.updatePlayerStats();
@@ -338,7 +346,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     })
                     .catch(error => {
                         console.error('Training fetch error:', error); // Log the actual error
-                        this.showNotification('Training failed! Server error.', 'error');
+                        this.showNotification(`Training failed! ${error.message}`, 'error');
                         this.computeCredits += totalPotionCost; // Refund
                         this.updatePlayerStats();
                         this.saveProgressToServer();
@@ -554,10 +562,15 @@ document.addEventListener('DOMContentLoaded', () => {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ challengeId: this.currentChallenge, userInput: userInput }),
                 });
+                 // Check for non-OK response first
+                 if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({ message: `Server error: ${response.statusText}` })); // Provide fallback error
+                    throw new Error(errorData.message || `Server error: ${response.status}`);
+                 }
                 result = await response.json();
             } catch (error) {
                 console.error("Validation fetch error:", error);
-                this.showNotification('Could not connect to server!', 'error');
+                this.showNotification(`Validation failed: ${error.message}`, 'error'); // Show specific error
                  if(runButton) runButton.disabled = false;
                 return;
             }
@@ -607,29 +620,40 @@ document.addEventListener('DOMContentLoaded', () => {
                 this.checkUnlocks(); // Check if new content is unlocked
             }
             this.updatePlayerStats(); // Update UI
-            this.saveProgressToServer(); // Save progress after level up
+            // Avoid saving progress excessively, maybe save only on level up or explicit save action?
+            // For now, keep save here for simplicity.
+            this.saveProgressToServer();
         },
         checkUnlocks() {
             let updated = false;
+            // Check world unlocks
             this.worlds.forEach(world => {
-                // Unlock world if level requirement met and it wasn't already unlocked
-                if (!world.unlocked && this.playerLevel >= world.unlocksAt) {
-                        world.unlocked = true;
-                        this.showNotification(`New World Unlocked: ${world.name}!`, 'unlock');
-                        updated = true;
+                const shouldBeUnlocked = this.playerLevel >= world.unlocksAt;
+                if (shouldBeUnlocked && !world.unlocked) {
+                    world.unlocked = true;
+                    this.showNotification(`New World Unlocked: ${world.name}!`, 'unlock');
+                    updated = true;
+                } else if (!shouldBeUnlocked && world.unlocked && world.id !== 1) { // Re-lock if level drops (e.g., debug off)
+                    // world.unlocked = false; // Decide if re-locking is desired
+                    // updated = true;
                 }
             });
-            // Unlock NAS if level requirement met
-            if (!this.nasUnlocked && this.playerLevel >= 6) { // Assuming NAS unlocks at level 6
+            // Check NAS unlock
+            const shouldNasBeUnlocked = this.playerLevel >= 6; // NAS unlock level
+            if (shouldNasBeUnlocked && !this.nasUnlocked) {
                  this.showNotification('Advanced Feature Unlocked: NAS Lab!', 'levelup');
                  this.nasUnlocked = true;
                  updated = true;
+            } else if (!shouldNasBeUnlocked && this.nasUnlocked) {
+                 // this.nasUnlocked = false; // Re-lock if level drops
+                 // updated = true;
             }
-            // If any unlocks happened, re-render necessary parts
+
+            // If any state changed that affects UI, re-render
              if(updated) {
-                 this.renderWorldMap(); // Update world map display
-                 this.renderNAS();      // Update NAS button status
-                 this.initNavigation(); // Re-init nav in case NAS button changed state
+                 this.renderWorldMap(); // Update world map display (shows locks correctly now)
+                 this.renderNAS();      // Update NAS button status/content
+                 this.initNavigation(); // Re-init nav to update NAS button lock state
              }
         },
         updatePlayerStats() {
@@ -687,21 +711,21 @@ document.addEventListener('DOMContentLoaded', () => {
                 const newNode = node.cloneNode(true);
                 node.parentNode.replaceChild(newNode, node);
 
-                // Add listener only if the node is clickable (active, completed, or debug mode)
-                const isClickable = newNode.classList.contains('active') || newNode.classList.contains('completed') || this.debugMode;
+                // Determine if the level is accessible
+                const challengeId = parseInt(newNode.dataset.challenge);
+                const isCompleted = newNode.classList.contains('completed');
+                const isActive = newNode.classList.contains('active');
+                 // A level is clickable if it's active, completed, or if debug mode is on (ignoring visual lock)
+                 const canClick = isActive || isCompleted || this.debugMode;
 
-                if (isClickable && !newNode.classList.contains('locked') ) { // Double check not locked visually
+
+                if (canClick && !isNaN(challengeId)) {
+                    newNode.style.cursor = 'pointer'; // Ensure pointer cursor
                     newNode.addEventListener('click', () => {
-                         const challengeId = parseInt(newNode.dataset.challenge);
-                         if (!isNaN(challengeId)) {
-                             this.loadLevel(challengeId);
-                         } else {
-                             console.error("Invalid challenge ID on level node:", newNode.dataset.challenge);
-                         }
+                         this.loadLevel(challengeId);
                     });
                 } else {
-                     // Optionally add styling or keep cursor as default for non-clickable nodes
-                     newNode.style.cursor = 'default';
+                     newNode.style.cursor = 'default'; // Non-clickable cursor
                 }
             });
         },
@@ -712,20 +736,35 @@ document.addEventListener('DOMContentLoaded', () => {
                 this.showNotification("Error: Invalid challenge selected.", "error");
                 return;
             }
-             // Allow loading only if it's the current challenge, already completed, or in debug mode
-             const canLoad = challengeId <= this.currentChallenge || this.debugMode;
+            // Find the world this challenge belongs to check world unlock status
+             const challengeData = this.challenges[challengeId - 1];
+             if (!challengeData) {
+                  console.error("Challenge data not found for ID:", challengeId); return;
+             }
+             const worldData = this.worlds.find(w => w.id === challengeData.world);
+             const isWorldLocked = worldData && !worldData.unlocked && !this.debugMode;
+
+             // Allow loading only if the world is unlocked AND (it's the current challenge, or completed, or debug mode)
+             const canLoad = !isWorldLocked && (challengeId <= this.currentChallenge || this.debugMode);
+
              if (!canLoad) {
-                 this.showNotification("Complete previous levels first!", "error");
+                 // More specific message: is it because the world is locked or the level?
+                 if (isWorldLocked) {
+                     this.showNotification(`World "${worldData.name}" is locked!`, "error");
+                 } else {
+                     this.showNotification("Complete previous levels first!", "error");
+                 }
                  return;
              }
 
+            // Set the current challenge ONLY if we are moving forward or revisiting the current one
+            // This prevents setting currentChallenge back when clicking a completed level
+             if (challengeId >= this.currentChallenge) {
+                // this.currentChallenge = challengeId; // Decided against this - just load the level requested
+             }
 
-            // this.currentChallenge = challengeId; // Set current challenge only if moving forward? No, allow revisiting.
-            const challenge = this.challenges[challengeId - 1]; // Get the specific challenge data
-            if (!challenge) {
-                 console.error("Challenge data not found for ID:", challengeId);
-                 return; // Exit if challenge data is missing
-            }
+
+            const challenge = challengeData; // Use already fetched data
 
             this.hintUsedThisLevel = false; // Reset hint status when loading/reloading a level
             const visContainer = document.getElementById('vis-container');
@@ -769,7 +808,13 @@ document.addEventListener('DOMContentLoaded', () => {
                          }
                      };
                       // Focus the input field shortly after showing the screen
-                     setTimeout(() => { inputField.focus(); }, 50);
+                     setTimeout(() => {
+                         // Check if still on level screen before focusing
+                         const currentScreen = document.querySelector('.game-screen.active-screen');
+                         if (currentScreen && currentScreen.id === 'level-screen' && document.activeElement !== inputField) {
+                            inputField.focus();
+                         }
+                     }, 100); // Slightly longer delay might help
                  }
              }
 
@@ -780,6 +825,7 @@ document.addEventListener('DOMContentLoaded', () => {
              this.showScreen('level-screen'); // Make the level screen visible
         },
         useHint() {
+            // Use the actual current challenge ID to find the correct challenge data
             const challengeIndex = this.currentChallenge - 1;
             // Ensure the current challenge index is valid
             if (challengeIndex < 0 || challengeIndex >= this.challenges.length) return;
@@ -789,24 +835,32 @@ document.addEventListener('DOMContentLoaded', () => {
 
             // Check conditions for using hint
             if (this.hintUsedThisLevel) {
-                 this.showNotification('Hint already used for this level.', 'error');
+                 this.showNotification('Hint already used for this attempt.', 'error'); // Clarify 'this attempt'
                  return;
              }
              if (this.insightPoints < hintCost) {
                  this.showNotification('Not enough Insight!', 'error');
                 return;
             }
+             if (!challenge.hint) {
+                  console.warn("No hint available for challenge:", this.currentChallenge);
+                  this.showNotification("No hint available for this challenge.", "error");
+                  // Disable button permanently if no hint exists?
+                  this.updateHintButtonState(); // Update state to potentially disable
+                  return;
+              }
+
 
             // Deduct cost, mark hint as used
             this.insightPoints -= hintCost;
-            this.hintUsedThisLevel = true;
+            this.hintUsedThisLevel = true; // Mark hint used for this level load/attempt
             this.updatePlayerStats();
             this.updateHintButtonState(); // Disable hint button after use
             this.saveProgressToServer();
 
             // Display the hint
             const instructions = document.getElementById('instructions-content');
-             if(instructions && challenge.hint) {
+             if(instructions) {
                  // Check if a hint box already exists to prevent duplicates
                  if (!instructions.querySelector('.hint-box')) {
                     const hintBox = document.createElement('div');
@@ -816,14 +870,12 @@ document.addEventListener('DOMContentLoaded', () => {
                     // Scroll hint into view if needed
                     hintBox.scrollIntoView({ behavior: 'smooth', block: 'end' });
                  }
-             } else if (!challenge.hint) {
-                 console.warn("No hint available for challenge:", this.currentChallenge);
-                 // Optionally refund if no hint exists? Or just disable button earlier.
              }
         },
         updateHintButtonState() {
             const hintButton = document.getElementById('hint-button');
             if (!hintButton) return;
+             // Use the actual current challenge ID
             const challengeIndex = this.currentChallenge - 1;
              // Ensure the current challenge index is valid
              if (challengeIndex < 0 || challengeIndex >= this.challenges.length) {
@@ -832,7 +884,7 @@ document.addEventListener('DOMContentLoaded', () => {
              }
             const challenge = this.challenges[challengeIndex];
             const hintCost = challenge.hintCost || 50;
-            // Disable if hint used, not enough insight, or no hint exists
+            // Disable if hint used, not enough insight, or no hint exists for the current challenge
             hintButton.disabled = this.hintUsedThisLevel || this.insightPoints < hintCost || !challenge.hint;
         },
         addVis(visData, isInstant = false) {
@@ -933,22 +985,21 @@ document.addEventListener('DOMContentLoaded', () => {
             }, 3000);
         },
 
-        // NEW: Function to update the Memory Bar UI
         updateMemoryBar() {
             const modelId = this.equippedModel || 'default';
             let cost = this.memoryCosts[modelId] || 10; // Use default cost if model not found
-            const crystalActive = this.purchasedItems.includes('memory_crystal');
+            // --- Use memoryCrystalActive state variable ---
+            const crystalActive = this.memoryCrystalActive;
 
             const fillBar = document.getElementById('memory-bar-fill');
             const fillText = document.getElementById('memory-bar-text');
             const crystalSlot = document.getElementById('crystal-slot');
 
-            // Exit if UI elements are not found (e.g., on a different screen)
             if (!fillBar || !fillText || !crystalSlot) return;
 
             let capacity = 100; // Base capacity
             if (crystalActive) {
-                capacity = 1000; // Crystal gives 10x capacity
+                capacity = 1000;
                 crystalSlot.textContent = '💎 Memory Crystal: ACTIVE';
                 crystalSlot.className = 'slot-active';
             } else {
@@ -956,49 +1007,36 @@ document.addEventListener('DOMContentLoaded', () => {
                 crystalSlot.className = 'slot-empty';
             }
 
-            // Calculate fill percentage, cap at 100% visually if overloaded without crystal
             let fillPercent = (cost / capacity) * 100;
             if (cost > 100 && !crystalActive) {
-                fillPercent = 100; // Visually cap at 100%
-                // Optionally change bar color to red to indicate overload
+                fillPercent = 100;
                 fillBar.style.background = 'var(--accent-red)';
             } else {
-                 // Use gradient background normally
                  fillBar.style.background = 'linear-gradient(90deg, var(--accent-green), var(--accent-yellow), var(--accent-red))';
             }
-             // Ensure fillPercent is within [0, 100]
              fillPercent = Math.max(0, Math.min(100, fillPercent));
-
 
             fillBar.style.width = `${fillPercent}%`;
             fillText.textContent = `${cost}% Used / ${capacity}% Capacity`;
         },
 
-        // --- NEW NAS FUNCTIONS ---
+        // --- NAS FUNCTIONS ---
         renderNAS() {
             const container = document.getElementById('nas-screen');
             if (!container) return;
 
             const nasNavButton = document.querySelector('.nav-button[data-screen="nas-screen"]');
-            // Update lock status based on unlock state and debug mode
             const isNasLocked = !this.nasUnlocked && !this.debugMode;
             if (nasNavButton) {
                  nasNavButton.classList.toggle('locked', isNasLocked);
             }
 
-            // Initialize listeners only if the screen is accessible
             if (!isNasLocked || this.debugMode) {
                 this.initNASListeners();
-                 // Set initial slider values and cost display
-                this.updateNASSlidersFromState(); // Update UI from game state
-                this.updateNASCost(); // Update cost based on current state
-            } else {
-                // Optionally display a message if trying to access while locked?
-                // The initNavigation function already handles preventing access.
+                this.updateNASSlidersFromState();
+                this.updateNASCost();
             }
-
         },
-        // Helper to sync slider UI with game state
         updateNASSlidersFromState() {
              const accuracySlider = document.getElementById('nas-accuracy');
              const speedSlider = document.getElementById('nas-speed');
@@ -1017,120 +1055,100 @@ document.addEventListener('DOMContentLoaded', () => {
 
         initNASListeners() {
             const nasButton = document.getElementById('start-nas-button');
-            // Ensure listener is attached only once
             if (nasButton && !nasButton.dataset.listenerAdded) {
                 nasButton.addEventListener('click', () => this.startNAS());
                 nasButton.dataset.listenerAdded = 'true';
             }
 
             document.querySelectorAll('.nas-slider').forEach(slider => {
-                 // Clone and replace to remove old listeners effectively
                 const newSlider = slider.cloneNode(true);
                 slider.parentNode.replaceChild(newSlider, slider);
-
-                // Add input event listener
                 newSlider.addEventListener('input', (e) => {
                     const id = e.target.id;
                     const value = e.target.value;
                     const valDisplay = document.getElementById(`${id}-val`);
-                    if (valDisplay) valDisplay.textContent = `${value}`; // Update value display span
-
-                    // Update game state preferences based on which slider changed
+                    if (valDisplay) valDisplay.textContent = `${value}`;
                     const intValue = parseInt(value);
                     if (id.includes('accuracy')) this.nasPreferences.accuracy = intValue;
                     else if (id.includes('speed')) this.nasPreferences.speed = intValue;
                     else if (id.includes('efficiency')) this.nasPreferences.efficiency = intValue;
-
-                    // Update the displayed cost whenever a slider changes
                     this.updateNASCost();
                 });
             });
         },
 
         updateNASCost() {
-            // Simple cost calculation based on preferences
             const baseCost = 5000;
             const accuracyCost = this.nasPreferences.accuracy * 100;
             const speedCost = this.nasPreferences.speed * 50;
             const efficiencyCost = this.nasPreferences.efficiency * 50;
             const totalCost = baseCost + accuracyCost + speedCost + efficiencyCost;
-
             const costDisplay = document.getElementById('nas-cost-display');
             if(costDisplay) costDisplay.textContent = `${totalCost} CC`;
         },
 
         startNAS() {
-            const costDisplay = document.getElementById('nas-cost-display');
             let cost = 5000; // Default cost
-             // Recalculate cost just before starting to be sure
             const baseCost = 5000;
             const accuracyCost = this.nasPreferences.accuracy * 100;
             const speedCost = this.nasPreferences.speed * 50;
             const efficiencyCost = this.nasPreferences.efficiency * 50;
             cost = baseCost + accuracyCost + speedCost + efficiencyCost;
 
-
             if (this.computeCredits < cost) {
                 this.showNotification('Not enough Compute Credits!', 'error');
                 return;
             }
 
-            // Deduct cost and save
             this.computeCredits -= cost;
             this.updatePlayerStats();
             this.saveProgressToServer();
 
-            // --- Update UI elements for NAS progress ---
             const nasButton = document.getElementById('start-nas-button');
             const nasStatus = document.getElementById('nas-status');
             const progressFill = document.getElementById('nas-progress-fill');
             const resultsDisplay = document.getElementById('nas-results-display');
 
-            if (nasButton) nasButton.disabled = true; // Disable button during search
+            if (nasButton) nasButton.disabled = true;
             if (nasStatus) nasStatus.textContent = 'Initializing evolution...';
-            if (progressFill) progressFill.style.width = '0%'; // Reset progress bar
-            if (resultsDisplay) resultsDisplay.innerHTML = ''; // Clear previous results
+            if (progressFill) progressFill.style.width = '0%';
+            if (resultsDisplay) resultsDisplay.innerHTML = '';
 
-            // --- Simulate progress visually (backend handles actual NAS) ---
             let progress = 0;
-            const maxSimulatedProgress = 95; // Stop visual progress slightly before 100%
-            const progressIntervalTime = 500; // Update progress bar faster
-
+            const maxSimulatedProgress = 95;
+            const progressIntervalTime = 500;
             const progressInterval = setInterval(() => {
-                progress += 5; // Increment progress
-                if (progressFill) progressFill.style.width = `${Math.min(progress, maxSimulatedProgress)}%`; // Update bar, cap at 95%
+                progress += 5;
+                if (progressFill) progressFill.style.width = `${Math.min(progress, maxSimulatedProgress)}%`;
                 if (nasStatus) nasStatus.textContent = `Evolving generation... ${Math.min(progress, maxSimulatedProgress)}%`;
                 if (progress >= maxSimulatedProgress) {
-                    clearInterval(progressInterval); // Stop simulation when near completion
+                    clearInterval(progressInterval);
                 }
             }, progressIntervalTime);
 
             this.showNotification('Starting Neural Architecture Search...', 'unlock');
 
-            // --- Call the Backend NAS endpoint ---
             fetch(`${this.backendUrl}/nas`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     preferences: this.nasPreferences,
-                    potions: this.activePotions // Send active potions if they should influence NAS evaluation
+                    potions: this.activePotions
                 })
             })
             .then(response => {
-                 if (!response.ok) { // Check for HTTP errors (like 500)
+                 if (!response.ok) {
                      return response.json().then(err => { throw new Error(err.message || `Server error: ${response.statusText}`); });
                  }
                  return response.json();
             })
             .then(data => {
-                clearInterval(progressInterval); // Stop simulation immediately
-                if (progressFill) progressFill.style.width = '100%'; // Set bar to 100% on completion
+                clearInterval(progressInterval);
+                if (progressFill) progressFill.style.width = '100%';
 
                 if (data.results && data.results.length > 0) {
                     if (nasStatus) nasStatus.textContent = `Evolution complete! Found ${data.total_evaluated || 0} valid architectures.`;
                     this.showNotification('NAS complete! Best architectures found.', 'success');
-
-                    // Display results nicely formatted
                     if (resultsDisplay) {
                         resultsDisplay.innerHTML = data.results.map((res, i) => `
                             <div class="nas-result-item">
@@ -1143,91 +1161,86 @@ document.addEventListener('DOMContentLoaded', () => {
                                 <p style="font-size: 0.8rem; color: var(--text-muted); margin-top: 10px;">${res.gene_summary || 'No summary'}</p>
                             </div>
                         `).join('');
-                         // Scroll results into view
                          resultsDisplay.parentElement.scrollTop = 0;
                     }
-
                 } else {
                     if (nasStatus) nasStatus.textContent = 'Search failed or found no valid models.';
                     this.showNotification(data.message || 'NAS search failed to find a valid model.', 'error');
                 }
-                if (nasButton) nasButton.disabled = false; // Re-enable button
+                if (nasButton) nasButton.disabled = false;
             })
             .catch(error => {
                 console.error("NAS Fetch Error:", error);
-                clearInterval(progressInterval); // Stop simulation on error
-                 if (progressFill) progressFill.style.width = '0%'; // Reset bar on error
+                clearInterval(progressInterval);
+                 if (progressFill) progressFill.style.width = '0%';
                 if (nasStatus) nasStatus.textContent = `Error: ${error.message}`;
-                if (nasButton) nasButton.disabled = false; // Re-enable button
+                if (nasButton) nasButton.disabled = false;
                 this.showNotification(`NAS search failed! ${error.message}`, 'error');
-                // Refund cost on failure
-                this.computeCredits += cost;
+                this.computeCredits += cost; // Refund
                 this.updatePlayerStats();
                 this.saveProgressToServer();
             });
         },
 
-        // --- Debug Mode Function ---
+        // --- Debug Mode Function (Corrected Memory Crystal Logic) ---
         initDebugMode() {
             const debugToggle = document.getElementById('debug-toggle');
             if (!debugToggle) return;
-
-             // Ensure listener is added only once
              if (debugToggle.dataset.listenerAttached) return;
 
             debugToggle.addEventListener('click', () => {
-                this.debugMode = !this.debugMode; // Toggle state
-                // Update button appearance
+                this.debugMode = !this.debugMode;
                 debugToggle.textContent = `Debug Mode: ${this.debugMode ? 'ON' : 'OFF'}`;
                 debugToggle.style.backgroundColor = this.debugMode ? 'var(--accent-green)' : 'var(--accent-red)';
 
                 if (this.debugMode) {
                     // --- ON Logic ---
-                    // Store original values before overriding? (Optional, makes OFF cleaner)
-                    // this.originalState = {
-                    //     computeCredits: this.computeCredits,
-                    //     insightPoints: this.insightPoints,
-                    //     playerLevel: this.playerLevel,
-                    //     xp: this.xp,
-                    //     purchasedItems: [...this.purchasedItems], // Copy array
-                    //     nasUnlocked: this.nasUnlocked,
-                    // };
-
-                    // Apply debug values
                     this.computeCredits = 50000;
                     this.insightPoints = 1000;
-                    this.playerLevel = 10; // Set high level to unlock things
-                    this.xp = 0; // Reset XP for clarity
-                    // Optionally auto-purchase items for testing?
-                    // this.purchasedItems = [...this.shopItems.map(i => i.id), ...this.projectItems.map(p => p.id)];
+                    this.playerLevel = 10;
+                    this.xp = 0;
+                    // --- MODIFIED: Explicitly add crystal ---
+                    if (!this.purchasedItems.includes('memory_crystal')) {
+                        this.purchasedItems.push('memory_crystal');
+                    }
+                    this.memoryCrystalActive = true; // Set active flag
+                    // --- END MODIFICATION ---
 
-                    this.updatePlayerStats(); // Update UI stats
-                    this.checkUnlocks(); // This will now unlock everything based on level 10
+                    this.updatePlayerStats();
+                    this.checkUnlocks(); // Unlock based on level 10
                     this.showNotification('Debug Mode ON: All features unlocked!', 'levelup');
-                    // Re-render affected screens
+                    // Re-render relevant screens
                     this.renderWorldMap();
-                    this.renderShop();
-                    this.renderProjectStore();
-                    this.renderNAS();
-                    this.initNavigation(); // Ensure nav buttons reflect unlocked state
-
+                    this.renderShop(); // Should now show crystal as "Active"
+                    this.renderNAS(); // Should show NAS unlocked
+                    this.updateMemoryBar(); // IMPORTANT: Update bar *after* setting crystal active
+                    this.initNavigation(); // Re-init nav buttons
                 } else {
                     // --- OFF Logic ---
                     this.showNotification('Debug Mode OFF: Normal progression restored', 'success');
-
-                    // --- Fetch latest saved state from server ---
-                    // This is safer than trying to restore locally stored "original" state
+                    // Fetch saved state from server to restore accurately
                     fetch(`${this.backendUrl}/get-progress`)
                         .then(response => response.json())
                         .then(data => {
-                            Object.assign(this, data); // Overwrite local state with saved state
-                            this.purchasedItems = this.purchasedItems || []; // Ensure arrays exist
+                            // Reset core state before applying fetched data
+                            Object.assign(this, {
+                                playerLevel: 1, xp: 0, insightPoints: 100, computeCredits: 1000,
+                                currentChallenge: 1, equippedModel: null, equippedProject: null,
+                                uploadedDatasets: [], purchasedItems: [], memoryCrystalActive: false,
+                                nasUnlocked: false, debugMode: false // Ensure debug is off
+                            });
+                             // Manually reset world locks based on level 1 *before* applying fetched data
+                            this.worlds.forEach(w => w.unlocked = (w.id === 1));
+
+                            // Now apply fetched data over the reset state
+                            Object.assign(this, data);
+                            this.purchasedItems = this.purchasedItems || [];
                             this.uploadedDatasets = this.uploadedDatasets || [];
-                            // Re-sync purchased status visually
+                            // Sync visual state based on fetched data
                             this.shopItems.forEach(item => item.purchased = this.purchasedItems.includes(item.id));
                             this.projectItems.forEach(item => item.purchased = this.purchasedItems.includes(item.id));
                             this.memoryCrystalActive = this.purchasedItems.includes('memory_crystal');
-                            // Re-check unlocks based on fetched level
+                            // Re-check unlocks based on the *actual fetched* level
                             this.checkUnlocks();
                             // Re-render everything
                             this.renderAll();
@@ -1235,20 +1248,21 @@ document.addEventListener('DOMContentLoaded', () => {
                         .catch(error => {
                             console.error('Error fetching progress after debug off:', error);
                             this.showNotification('Error restoring progress!', 'error');
-                            // Fallback: reset to basic defaults if fetch fails
+                            // Fallback: reset to absolute basic defaults
                             Object.assign(this, {
                                 playerLevel: 1, xp: 0, insightPoints: 100, computeCredits: 1000,
                                 currentChallenge: 1, equippedModel: null, equippedProject: null,
                                 uploadedDatasets: [], purchasedItems: [], memoryCrystalActive: false,
                                 nasUnlocked: false, debugMode: false
                             });
+                            this.worlds.forEach(w => w.unlocked = (w.id === 1)); // Lock worlds
                             this.renderAll();
                         });
                 }
-                 // Save the debug mode state itself (ON/OFF)? Typically not needed.
             });
-             debugToggle.dataset.listenerAttached = 'true'; // Mark listener as attached
+             debugToggle.dataset.listenerAttached = 'true';
         },
+
 
         // --- REVERTED: MNIST LAB FUNCTIONS (BACK TO DRAWING CANVAS) ---
         initMNISTLab() {
@@ -1256,30 +1270,21 @@ document.addEventListener('DOMContentLoaded', () => {
             const predictBtn = document.getElementById('predict-digit-btn');
             const clearBtn = document.getElementById('clear-canvas-btn'); // Target canvas clear button
 
-            // If elements don't exist, skip
             if (!this.mnistCanvas || !predictBtn || !clearBtn) {
                  console.warn("MNIST Lab canvas elements not found. Skipping initialization.");
                 return;
             }
-
-             // Ensure listeners are added only once
              if (this.mnistCanvas.dataset.listenerAttached) return;
 
-
             this.mnistCtx = this.mnistCanvas.getContext('2d');
-            this.clearMNISTCanvas(); // Clear to black bg with default text
+            this.clearMNISTCanvas();
 
-            // Set drawing style
             this.mnistCtx.strokeStyle = "white";
-            // --- REDUCED LINE WIDTH ---
-            this.mnistCtx.lineWidth = 12; // Reduced from 20 for thinner lines
-            // --- END CHANGE ---
+            this.mnistCtx.lineWidth = 12; // Thinner lines
             this.mnistCtx.lineCap = 'round';
             this.mnistCtx.lineJoin = 'round';
 
-            // --- Drawing Event Listeners ---
             const startDrawing = (e) => {
-                // Clear previous prediction when starting new drawing
                 this.updateMNISTResults('?', 'Draw a digit (0-9)');
                 this.isDrawing = true;
                 this.mnistCtx.beginPath();
@@ -1294,48 +1299,39 @@ document.addEventListener('DOMContentLoaded', () => {
             };
             const stopDrawing = () => {
                 if(this.isDrawing) {
-                    this.mnistCtx.closePath(); // Close the path when done drawing
+                    this.mnistCtx.closePath();
                     this.isDrawing = false;
-                    // Optional: Automatically predict when drawing stops?
-                    // this.predictDigit();
                 }
             };
 
-            // Mouse events
             this.mnistCanvas.addEventListener('mousedown', startDrawing);
             this.mnistCanvas.addEventListener('mousemove', draw);
             this.mnistCanvas.addEventListener('mouseup', stopDrawing);
-            this.mnistCanvas.addEventListener('mouseout', stopDrawing); // Stop if mouse leaves canvas
+            this.mnistCanvas.addEventListener('mouseout', stopDrawing);
 
-            // Touch events
             this.mnistCanvas.addEventListener('touchstart', (e) => {
-                e.preventDefault(); // Prevent page scrolling
+                e.preventDefault();
                 if (e.touches.length > 0) startDrawing(e.touches[0]);
             }, { passive: false });
             this.mnistCanvas.addEventListener('touchmove', (e) => {
-                e.preventDefault(); // Prevent page scrolling
+                e.preventDefault();
                  if (e.touches.length > 0) draw(e.touches[0]);
             }, { passive: false });
             this.mnistCanvas.addEventListener('touchend', stopDrawing);
             this.mnistCanvas.addEventListener('touchcancel', stopDrawing);
 
-            // Button listeners
             clearBtn.addEventListener('click', () => this.clearMNISTCanvas());
             predictBtn.addEventListener('click', () => this.predictDigit());
 
-             // Mark listeners as attached
              this.mnistCanvas.dataset.listenerAttached = 'true';
         },
 
         getMousePos(canvas, evt) {
             const rect = canvas.getBoundingClientRect();
-            // Calculate scale based on actual size vs CSS size
             const scaleX = canvas.width / rect.width;
             const scaleY = canvas.height / rect.height;
-            // Get client coordinates, handling both touch and mouse
             const clientX = evt.clientX ?? evt.touches?.[0]?.clientX ?? 0;
             const clientY = evt.clientY ?? evt.touches?.[0]?.clientY ?? 0;
-            // Calculate canvas coordinates
             return {
                 x: (clientX - rect.left) * scaleX,
                 y: (clientY - rect.top) * scaleY
@@ -1344,17 +1340,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
         clearMNISTCanvas() {
             if (!this.mnistCtx || !this.mnistCanvas) return;
-            // Fill background black
             this.mnistCtx.fillStyle = "black";
             this.mnistCtx.fillRect(0, 0, this.mnistCanvas.width, this.mnistCanvas.height);
-            // Reset result text
             this.updateMNISTResults('?', 'Draw a digit (0-9)');
         },
 
         updateMNISTResults(digitText, confidenceText) {
-            // --- CORRECTED ID ---
-            const resultEl = document.getElementById('mnist-result-display');
-            // --- END CORRECTION ---
+            const resultEl = document.getElementById('mnist-result-display'); // Correct ID
             const confidenceEl = document.getElementById('mnist-confidence');
             if(resultEl) resultEl.textContent = digitText;
             if(confidenceEl) confidenceEl.textContent = confidenceText;
@@ -1363,7 +1355,6 @@ document.addEventListener('DOMContentLoaded', () => {
         async predictDigit() {
             if (!this.mnistCanvas) return;
 
-             // --- Check if canvas is empty ---
              const blankCanvas = document.createElement('canvas');
              blankCanvas.width = this.mnistCanvas.width;
              blankCanvas.height = this.mnistCanvas.height;
@@ -1375,37 +1366,30 @@ document.addEventListener('DOMContentLoaded', () => {
                  this.updateMNISTResults('?', 'Draw a digit (0-9)');
                  return;
              }
-             // --- End check ---
 
-
-            this.updateMNISTResults('...', 'Analyzing...'); // Show loading state
+            this.updateMNISTResults('...', 'Analyzing...');
 
             try {
-                // Send canvas data URL to the backend
                 const response = await fetch(`${this.backendUrl}/predict-digit`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ imageData: currentDataURL }), // Send Base64 data
+                    body: JSON.stringify({ imageData: currentDataURL }),
                 });
 
-                if (!response.ok) { // Check for HTTP errors
-                    const err = await response.json().catch(() => ({ error: `Server error: ${response.statusText}` })); // Try to parse error, provide fallback
+                if (!response.ok) {
+                    const err = await response.json().catch(() => ({ error: `Server error: ${response.statusText}` }));
                     throw new Error(err.error || `Server error: ${response.statusText}`);
                 }
-
                 const result = await response.json();
-
-                if (result.error) { // Check for application-level errors from backend
+                if (result.error) {
                     throw new Error(result.error);
                 }
-
-                // Display the successful prediction
                 this.updateMNISTResults(result.predicted_digit, `Confidence: ${result.confidence}%`);
 
             } catch (error) {
                 console.error('Error predicting digit:', error);
-                this.updateMNISTResults('X', 'Prediction failed.'); // Show error state
-                this.showNotification(`Prediction Error: ${error.message}`, 'error'); // Show specific error
+                this.updateMNISTResults('X', 'Prediction failed.');
+                this.showNotification(`Prediction Error: ${error.message}`, 'error');
             }
         }
         // --- END REVERTED MNIST LAB FUNCTIONS ---
