@@ -11,13 +11,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // --- Potion State ---
         activePotions: [],
+        
+        // --- Training State ---
+        isTraining: false, // Prevents multiple simultaneous training requests
 
-        // --- NAS Lab State (from friend's code) ---
-        nasUnlocked: false,
-        nasPreferences: { accuracy: 50, speed: 30, efficiency: 20 },
 
         // --- Debug Mode State (from friend's code) ---
         debugMode: false,
+        preDebugState: null, // Stores original state when debug mode is enabled
 
         // --- REVERTED: MNIST Lab State (Back to Drawing Canvas) ---
         mnistCanvas: null,
@@ -115,7 +116,6 @@ document.addEventListener('DOMContentLoaded', () => {
             this.renderShop();
             this.renderProjectStore();
             this.renderDataGarden();
-            this.renderNAS(); // Render NAS screen
             this.updatePlayerStats();
             this.initNavigation();
             this.updateMemoryBar(); // Update memory bar on load
@@ -142,7 +142,6 @@ document.addEventListener('DOMContentLoaded', () => {
                  });
                  modalClose.dataset.listenerAttached = 'true';
              }
-             // NAS Listeners are initialized in renderNAS
         },
 
         saveProgressToServer() {
@@ -274,6 +273,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 button.parentNode.replaceChild(newButton, button);
 
                 newButton.addEventListener('click', () => {
+                    // --- RATE LIMITING CHECK ---
+                    if (this.isTraining) {
+                        this.showNotification('Training already in progress! Please wait.', 'error');
+                        return;
+                    }
+                    
                     const datasetName = newButton.dataset.datasetName;
                     if (!this.equippedModel && datasetName !== 'MNIST') { // Allow training MNIST without equipping SimpleCNN
                         this.showNotification('You must equip a model first!', 'error'); return;
@@ -312,13 +317,16 @@ document.addEventListener('DOMContentLoaded', () => {
                     this.updatePlayerStats();
                     this.saveProgressToServer();
 
+                    // Set training flag to prevent double-clicks
+                    this.isTraining = true;
+
                     this.showNotification(`Training ${modelToCheck} on ${datasetName}... This may take a moment.`, 'unlock');
 
                     fetch(`${this.backendUrl}/train-model`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
-                            modelName: this.equippedModel, // Backend defaults to SimpleCNN if null
+                            modelName: modelToCheck, // Use modelToCheck for consistency
                             datasetName: datasetName,
                             activePotions: this.activePotions
                         })
@@ -330,6 +338,7 @@ document.addEventListener('DOMContentLoaded', () => {
                          return response.json();
                     })
                     .then(result => {
+                        this.isTraining = false; // Reset training flag
                         if (result.status === 'success') {
                             document.getElementById('result-model-name').textContent = modelToCheck;
                             document.getElementById('result-dataset-name').textContent = datasetName;
@@ -345,6 +354,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         }
                     })
                     .catch(error => {
+                        this.isTraining = false; // Reset training flag
                         console.error('Training fetch error:', error); // Log the actual error
                         this.showNotification(`Training failed! ${error.message}`, 'error');
                         this.computeCredits += totalPotionCost; // Refund
@@ -420,7 +430,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             container.innerHTML = this.shopItems.map(item => {
                 let buttonHtml = '';
-                const purchased = this.purchasedItems.includes(item.id) || this.debugMode;
+                const purchased = this.purchasedItems.includes(item.id);
 
                 // --- MODIFIED LOGIC START ---
                 // Special case for the Memory Crystal
@@ -462,7 +472,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             container.innerHTML = this.projectItems.map(item => {
                  let buttonHtml = '';
-                 const purchased = this.purchasedItems.includes(item.id) || this.debugMode;
+                 const purchased = this.purchasedItems.includes(item.id);
 
                  if (!purchased) {
                     buttonHtml = `<button class="buy-button" data-item-id="${item.id}" data-item-type="project" ${this.computeCredits < item.cost ? 'disabled' : ''}>Buy (${item.cost} C)</button>`;
@@ -638,23 +648,6 @@ document.addEventListener('DOMContentLoaded', () => {
                     // updated = true;
                 }
             });
-            // Check NAS unlock
-            const shouldNasBeUnlocked = this.playerLevel >= 6; // NAS unlock level
-            if (shouldNasBeUnlocked && !this.nasUnlocked) {
-                 this.showNotification('Advanced Feature Unlocked: NAS Lab!', 'levelup');
-                 this.nasUnlocked = true;
-                 updated = true;
-            } else if (!shouldNasBeUnlocked && this.nasUnlocked) {
-                 // this.nasUnlocked = false; // Re-lock if level drops
-                 // updated = true;
-            }
-
-            // If any state changed that affects UI, re-render
-             if(updated) {
-                 this.renderWorldMap(); // Update world map display (shows locks correctly now)
-                 this.renderNAS();      // Update NAS button status/content
-                 this.initNavigation(); // Re-init nav to update NAS button lock state
-             }
         },
         updatePlayerStats() {
              const insightStat = document.getElementById('insight-stat');
@@ -680,11 +673,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 newButton.addEventListener('click', () => {
                     const screenId = newButton.dataset.screen;
 
-                    // Special check for NAS Lab unlock status
-                    if(screenId === 'nas-screen' && !this.nasUnlocked && !this.debugMode) {
-                        this.showNotification('NAS Lab is locked! Reach Player Level 6.', 'error');
-                        return; // Prevent switching to locked screen
-                    }
                     this.showScreen(screenId);
                     // Update active state for buttons
                     document.querySelectorAll('.nav-button').forEach(btn => btn.classList.remove('active'));
@@ -1007,7 +995,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 crystalSlot.className = 'slot-empty';
             }
 
-            let fillPercent = (cost / capacity) * 100;
+            let fillPercent = capacity > 0 ? (cost / capacity) * 100 : 0; // Safety check for division by zero
             if (cost > 100 && !crystalActive) {
                 fillPercent = 100;
                 fillBar.style.background = 'var(--accent-red)';
@@ -1020,169 +1008,6 @@ document.addEventListener('DOMContentLoaded', () => {
             fillText.textContent = `${cost}% Used / ${capacity}% Capacity`;
         },
 
-        // --- NAS FUNCTIONS ---
-        renderNAS() {
-            const container = document.getElementById('nas-screen');
-            if (!container) return;
-
-            const nasNavButton = document.querySelector('.nav-button[data-screen="nas-screen"]');
-            const isNasLocked = !this.nasUnlocked && !this.debugMode;
-            if (nasNavButton) {
-                 nasNavButton.classList.toggle('locked', isNasLocked);
-            }
-
-            if (!isNasLocked || this.debugMode) {
-                this.initNASListeners();
-                this.updateNASSlidersFromState();
-                this.updateNASCost();
-            }
-        },
-        updateNASSlidersFromState() {
-             const accuracySlider = document.getElementById('nas-accuracy');
-             const speedSlider = document.getElementById('nas-speed');
-             const efficiencySlider = document.getElementById('nas-efficiency');
-             const accVal = document.getElementById('nas-accuracy-val');
-             const speedVal = document.getElementById('nas-speed-val');
-             const effVal = document.getElementById('nas-efficiency-val');
-
-             if (accuracySlider) accuracySlider.value = this.nasPreferences.accuracy;
-             if (speedSlider) speedSlider.value = this.nasPreferences.speed;
-             if (efficiencySlider) efficiencySlider.value = this.nasPreferences.efficiency;
-             if (accVal) accVal.textContent = this.nasPreferences.accuracy;
-             if (speedVal) speedVal.textContent = this.nasPreferences.speed;
-             if (effVal) effVal.textContent = this.nasPreferences.efficiency;
-         },
-
-        initNASListeners() {
-            const nasButton = document.getElementById('start-nas-button');
-            if (nasButton && !nasButton.dataset.listenerAdded) {
-                nasButton.addEventListener('click', () => this.startNAS());
-                nasButton.dataset.listenerAdded = 'true';
-            }
-
-            document.querySelectorAll('.nas-slider').forEach(slider => {
-                const newSlider = slider.cloneNode(true);
-                slider.parentNode.replaceChild(newSlider, slider);
-                newSlider.addEventListener('input', (e) => {
-                    const id = e.target.id;
-                    const value = e.target.value;
-                    const valDisplay = document.getElementById(`${id}-val`);
-                    if (valDisplay) valDisplay.textContent = `${value}`;
-                    const intValue = parseInt(value);
-                    if (id.includes('accuracy')) this.nasPreferences.accuracy = intValue;
-                    else if (id.includes('speed')) this.nasPreferences.speed = intValue;
-                    else if (id.includes('efficiency')) this.nasPreferences.efficiency = intValue;
-                    this.updateNASCost();
-                });
-            });
-        },
-
-        updateNASCost() {
-            const baseCost = 5000;
-            const accuracyCost = this.nasPreferences.accuracy * 100;
-            const speedCost = this.nasPreferences.speed * 50;
-            const efficiencyCost = this.nasPreferences.efficiency * 50;
-            const totalCost = baseCost + accuracyCost + speedCost + efficiencyCost;
-            const costDisplay = document.getElementById('nas-cost-display');
-            if(costDisplay) costDisplay.textContent = `${totalCost} CC`;
-        },
-
-        startNAS() {
-            let cost = 5000; // Default cost
-            const baseCost = 5000;
-            const accuracyCost = this.nasPreferences.accuracy * 100;
-            const speedCost = this.nasPreferences.speed * 50;
-            const efficiencyCost = this.nasPreferences.efficiency * 50;
-            cost = baseCost + accuracyCost + speedCost + efficiencyCost;
-
-            if (this.computeCredits < cost) {
-                this.showNotification('Not enough Compute Credits!', 'error');
-                return;
-            }
-
-            this.computeCredits -= cost;
-            this.updatePlayerStats();
-            this.saveProgressToServer();
-
-            const nasButton = document.getElementById('start-nas-button');
-            const nasStatus = document.getElementById('nas-status');
-            const progressFill = document.getElementById('nas-progress-fill');
-            const resultsDisplay = document.getElementById('nas-results-display');
-
-            if (nasButton) nasButton.disabled = true;
-            if (nasStatus) nasStatus.textContent = 'Initializing evolution...';
-            if (progressFill) progressFill.style.width = '0%';
-            if (resultsDisplay) resultsDisplay.innerHTML = '';
-
-            let progress = 0;
-            const maxSimulatedProgress = 95;
-            const progressIntervalTime = 500;
-            const progressInterval = setInterval(() => {
-                progress += 5;
-                if (progressFill) progressFill.style.width = `${Math.min(progress, maxSimulatedProgress)}%`;
-                if (nasStatus) nasStatus.textContent = `Evolving generation... ${Math.min(progress, maxSimulatedProgress)}%`;
-                if (progress >= maxSimulatedProgress) {
-                    clearInterval(progressInterval);
-                }
-            }, progressIntervalTime);
-
-            this.showNotification('Starting Neural Architecture Search...', 'unlock');
-
-            fetch(`${this.backendUrl}/nas`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    preferences: this.nasPreferences,
-                    potions: this.activePotions
-                })
-            })
-            .then(response => {
-                 if (!response.ok) {
-                     return response.json().then(err => { throw new Error(err.message || `Server error: ${response.statusText}`); });
-                 }
-                 return response.json();
-            })
-            .then(data => {
-                clearInterval(progressInterval);
-                if (progressFill) progressFill.style.width = '100%';
-
-                if (data.results && data.results.length > 0) {
-                    if (nasStatus) nasStatus.textContent = `Evolution complete! Found ${data.total_evaluated || 0} valid architectures.`;
-                    this.showNotification('NAS complete! Best architectures found.', 'success');
-                    if (resultsDisplay) {
-                        resultsDisplay.innerHTML = data.results.map((res, i) => `
-                            <div class="nas-result-item">
-                                <h3>Rank #${i + 1} (Fitness: ${res.fitness?.toFixed(2) || 'N/A'})</h3>
-                                <div class="nas-result-stats">
-                                    <div><strong>Accuracy:</strong> ${res.accuracy?.toFixed(2) || 'N/A'}%</div>
-                                    <div><strong>Speed:</strong> ${res.inference_time?.toFixed(1) || 'N/A'} ms</div>
-                                    <div><strong>Size:</strong> ${res.model_size?.toFixed(2) || 'N/A'} MB</div>
-                                </div>
-                                <p style="font-size: 0.8rem; color: var(--text-muted); margin-top: 10px;">${res.gene_summary || 'No summary'}</p>
-                            </div>
-                        `).join('');
-                         resultsDisplay.parentElement.scrollTop = 0;
-                    }
-                } else {
-                    if (nasStatus) nasStatus.textContent = 'Search failed or found no valid models.';
-                    this.showNotification(data.message || 'NAS search failed to find a valid model.', 'error');
-                }
-                if (nasButton) nasButton.disabled = false;
-            })
-            .catch(error => {
-                console.error("NAS Fetch Error:", error);
-                clearInterval(progressInterval);
-                 if (progressFill) progressFill.style.width = '0%';
-                if (nasStatus) nasStatus.textContent = `Error: ${error.message}`;
-                if (nasButton) nasButton.disabled = false;
-                this.showNotification(`NAS search failed! ${error.message}`, 'error');
-                this.computeCredits += cost; // Refund
-                this.updatePlayerStats();
-                this.saveProgressToServer();
-            });
-        },
-
-       
           // --- Debug Mode Function (Corrected Memory Crystal & Item Purchase Logic) ---
         initDebugMode() {
             const debugToggle = document.getElementById('debug-toggle');
@@ -1194,76 +1019,85 @@ document.addEventListener('DOMContentLoaded', () => {
                 debugToggle.style.backgroundColor = this.debugMode ? 'var(--accent-green)' : 'var(--accent-red)';
 
                 if (this.debugMode) {
-                    // --- ON Logic ---
-                    this.computeCredits = 50000;
-                    this.insightPoints = 1000;
-                    this.playerLevel = 10;
+                    // --- ON Logic: Save original state first ---
+                    this.preDebugState = {
+                        computeCredits: this.computeCredits,
+                        insightPoints: this.insightPoints,
+                        playerLevel: this.playerLevel,
+                        xp: this.xp,
+                        purchasedItems: [...this.purchasedItems], // Clone array
+                        equippedModel: this.equippedModel,
+                        equippedProject: this.equippedProject
+                    };
+                    
+                    // Give debug resources
+                    this.computeCredits = 100000; // Lots of money to buy anything
+                    this.insightPoints = 10000;   // Lots of insight
+                    this.playerLevel = 10;        // High level
                     this.xp = 0;
 
-                    // --- MODIFIED: Explicitly add ALL items to purchasedItems ---
-                    this.shopItems.forEach(item => {
-                        if (!this.purchasedItems.includes(item.id)) {
-                            this.purchasedItems.push(item.id);
-                        }
-                    });
-                    this.projectItems.forEach(item => {
-                        if (!this.purchasedItems.includes(item.id)) {
-                            this.purchasedItems.push(item.id);
-                        }
-                    });
-                    // --- END MODIFICATION ---
+                    // Unlock all worlds
+                    this.worlds.forEach(world => world.unlocked = true);
 
-                    // Ensure memory crystal active flag is set
-                    this.memoryCrystalActive = this.purchasedItems.includes('memory_crystal');
-
+                    // Update UI
                     this.updatePlayerStats();
-                    this.checkUnlocks(); // Unlock based on level 10
-                    this.showNotification('Debug Mode ON: All features unlocked!', 'levelup');
-                    // Re-render relevant screens
+                    this.checkUnlocks();
+                    
+                    this.showNotification('Debug Mode ON: 100K Credits unlocked!', 'levelup');
+                    
+                    // Re-render screens
                     this.renderWorldMap();
-                    this.renderShop(); // Should show all items as purchased/active
-                    this.renderProjectStore(); // Should show all projects as purchased
-                    this.renderNAS(); // Should show NAS unlocked
-                    this.updateMemoryBar(); // Update bar *after* setting crystal active
-                    this.initNavigation(); // Re-init nav buttons
+                    this.renderShop();
+                    this.renderProjectStore();
+                    this.updateMemoryBar();
+                    this.initNavigation();
                 } else {
-                    // --- OFF Logic ---
-                    this.showNotification('Debug Mode OFF: Normal progression restored', 'success');
-                    // Fetch saved state from server to restore accurately
-                    fetch(`${this.backendUrl}/get-progress`)
-                        .then(response => response.ok ? response.json() : Promise.reject('Fetch failed'))
-                        .then(data => {
-                             // Reset core state before applying fetched data
-                            Object.assign(this, {
-                                playerLevel: 1, xp: 0, insightPoints: 100, computeCredits: 1000,
-                                currentChallenge: 1, equippedModel: null, equippedProject: null,
-                                uploadedDatasets: [], purchasedItems: [], memoryCrystalActive: false,
-                                nasUnlocked: false, debugMode: false // Ensure debug is off
-                            });
-                             // Manually reset world locks based on level 1
-                            this.worlds.forEach(w => w.unlocked = (w.id === 1));
-
-                            // Apply fetched data
-                            Object.assign(this, data);
-                            this.purchasedItems = this.purchasedItems || [];
-                            this.uploadedDatasets = this.uploadedDatasets || [];
-                            // Sync visual state
-                            this.shopItems.forEach(item => item.purchased = this.purchasedItems.includes(item.id));
-                            this.projectItems.forEach(item => item.purchased = this.purchasedItems.includes(item.id));
-                            this.memoryCrystalActive = this.purchasedItems.includes('memory_crystal');
-                            // Re-check unlocks based on fetched level
-                            this.checkUnlocks();
-                            // Re-render everything
-                            this.renderAll();
-                        })
-                        .catch(error => {
-                            console.error('Error fetching progress after debug off:', error);
-                            this.showNotification('Error restoring progress! Resetting.', 'error');
-                            // Fallback reset
-                            Object.assign(this, { playerLevel: 1, xp: 0, insightPoints: 100, computeCredits: 1000, currentChallenge: 1, equippedModel: null, equippedProject: null, uploadedDatasets: [], purchasedItems: [], memoryCrystalActive: false, nasUnlocked: false, debugMode: false });
-                            this.worlds.forEach(w => w.unlocked = (w.id === 1));
-                            this.renderAll();
-                        });
+                    // --- OFF Logic: Restore original state ---
+                    if (this.preDebugState) {
+                        // Restore original values
+                        this.computeCredits = this.preDebugState.computeCredits;
+                        this.insightPoints = this.preDebugState.insightPoints;
+                        this.playerLevel = this.preDebugState.playerLevel;
+                        this.xp = this.preDebugState.xp;
+                        
+                        // Keep any NEW items purchased during debug mode
+                        const newPurchases = this.purchasedItems.filter(
+                            item => !this.preDebugState.purchasedItems.includes(item)
+                        );
+                        this.purchasedItems = [...this.preDebugState.purchasedItems, ...newPurchases];
+                        
+                        // Restore equipment (unless user equipped something new during debug)
+                        if (this.equippedModel === this.preDebugState.equippedModel || 
+                            !this.purchasedItems.includes(this.equippedModel)) {
+                            this.equippedModel = this.preDebugState.equippedModel;
+                        }
+                        if (this.equippedProject === this.preDebugState.equippedProject || 
+                            !this.purchasedItems.includes(this.equippedProject)) {
+                            this.equippedProject = this.preDebugState.equippedProject;
+                        }
+                        
+                        // Clear saved state
+                        delete this.preDebugState;
+                    }
+                    
+                    this.debugMode = false;
+                    
+                    // Sync visual state
+                    this.shopItems.forEach(item => item.purchased = this.purchasedItems.includes(item.id));
+                    this.projectItems.forEach(item => item.purchased = this.purchasedItems.includes(item.id));
+                    this.memoryCrystalActive = this.purchasedItems.includes('memory_crystal');
+                    
+                    // Re-check unlocks based on real level
+                    this.checkUnlocks();
+                    
+                    // Update UI and re-render
+                    this.updatePlayerStats();
+                    this.renderAll();
+                    
+                    // Save the restored state to server
+                    this.saveProgressToServer();
+                    
+                    this.showNotification('Debug Mode OFF: Original progress restored!', 'success');
                 }
             });
              debugToggle.dataset.listenerAttached = 'true';
@@ -1286,15 +1120,26 @@ document.addEventListener('DOMContentLoaded', () => {
             this.clearMNISTCanvas();
 
             this.mnistCtx.strokeStyle = "white";
-            this.mnistCtx.lineWidth = 12; // Thinner lines
+            // Drawing settings optimized for precise digit recognition
+            // Thinner lines prevent blur and false curves when compressed to 28x28
+            this.mnistCtx.lineWidth = 8; // Thin lines: 280x280 canvas → 28x28 (8px → 0.8px after compression)
             this.mnistCtx.lineCap = 'round';
             this.mnistCtx.lineJoin = 'round';
+            // Enable smoothing for better quality
+            this.mnistCtx.imageSmoothingEnabled = true;
+            this.mnistCtx.imageSmoothingQuality = 'high';
 
             const startDrawing = (e) => {
                 this.updateMNISTResults('?', 'Draw a digit (0-9)');
                 this.isDrawing = true;
-                this.mnistCtx.beginPath();
                 const pos = this.getMousePos(this.mnistCanvas, e);
+                this.mnistCtx.beginPath();
+                this.mnistCtx.moveTo(pos.x, pos.y);
+                // Draw a small circle to register single clicks/taps
+                this.mnistCtx.arc(pos.x, pos.y, this.mnistCtx.lineWidth / 2, 0, Math.PI * 2);
+                this.mnistCtx.fillStyle = "white";
+                this.mnistCtx.fill();
+                this.mnistCtx.beginPath(); // Start new path for line drawing
                 this.mnistCtx.moveTo(pos.x, pos.y);
             };
             const draw = (e) => {
@@ -1302,6 +1147,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 const pos = this.getMousePos(this.mnistCanvas, e);
                 this.mnistCtx.lineTo(pos.x, pos.y);
                 this.mnistCtx.stroke();
+                this.mnistCtx.beginPath(); // Reset path to prevent lag
+                this.mnistCtx.moveTo(pos.x, pos.y);
             };
             const stopDrawing = () => {
                 if(this.isDrawing) {

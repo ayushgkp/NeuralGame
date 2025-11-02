@@ -129,48 +129,6 @@
                 </div>
             </div>
             
-            <!-- NAS Lab Screen -->
-            <div id="nas-screen" class="game-screen">
-                <h1 class="screen-title">🧠 NAS Lab</h1>
-                <p class="screen-subtitle">Use Compute Credits to automatically evolve a new architecture.</p>
-                <div class="nas-layout">
-                    <div class="nas-panel nas-controls">
-                        <h2>Evolution Preferences</h2>
-                        <div class="slider-container">
-                            <label for="nas-accuracy">Accuracy: <span id="nas-accuracy-val">50</span>%</label>
-                            <input type="range" id="nas-accuracy" class="nas-slider" min="0" max="100" value="50">
-                        </div>
-                        <div class="slider-container">
-                            <label for="nas-speed">Speed: <span id="nas-speed-val">30</span>%</label>
-                            <input type="range" id="nas-speed" class="nas-slider" min="0" max="100" value="30">
-                        </div>
-                        <div class="slider-container">
-                            <label for="nas-efficiency">Efficiency (Size): <span id="nas-efficiency-val">20</span>%</label>
-                            <input type="range" id="nas-efficiency" class="nas-slider" min="0" max="100" value="20">
-                        </div>
-                        
-                        <div class="nas-cost">
-                            <strong>Estimated Cost:</strong> <span id="nas-cost-display">10000 CC</span>
-                        </div>
-                        
-                        <button id="start-nas-button" class="nas-button">Start Evolution</button>
-                    </div>
-                    <div class="nas-results">
-                        <div class="nas-panel">
-                            <h2>Evolution Progress</h2>
-                            <div id="nas-progress" class="nas-progress">
-                                <div class="progress-bar">
-                                    <div id="nas-progress-fill" class="progress-fill"></div>
-                                </div>
-                                <div id="nas-status">Ready to evolve...</div>
-                            </div>
-                            <div id="nas-results-display" class="nas-results-display">
-                                <!-- NAS results loaded by JS -->
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
 
             <!-- MNIST Lab Screen (Reverted to Canvas) -->
             <div id="mnist-lab-screen" class="game-screen">
@@ -202,7 +160,6 @@
             <button class="nav-button active" data-screen="world-map-screen">🌐 World Map</button>
             <button class="nav-button" data-screen="data-garden-screen">🌱 Data Garden</button>
             <button class="nav-button" data-screen="shop-screen">🛒 Store</button>
-            <button class="nav-button" data-screen="nas-screen">🧠 NAS Lab</button>
             <!-- Added MNIST Lab Navigation Button -->
             <button class="nav-button" data-screen="mnist-lab-screen">✏️ MNIST Lab</button>
         </footer>
